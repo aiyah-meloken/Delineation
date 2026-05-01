@@ -1,51 +1,125 @@
-import { useState } from "react";
-import reactLogo from "./assets/react.svg";
-import { invoke } from "@tauri-apps/api/core";
-import "./App.css";
+import { useEffect, useState } from 'react'
+import { useProjectStore } from './store/projectStore'
+import { pickFolder, listHtmlFiles, readViewFile, pathBasename } from './tauri/fs'
+import { loadLastProject, saveLastProject } from './tauri/persistence'
+import { seedSampleProjectIfMissing } from './seed/seedSampleProject'
+import { TopBar } from './components/TopBar'
+import { Sidebar } from './components/Sidebar'
+import { TabStrip } from './components/TabStrip'
+import { ViewerPane } from './components/ViewerPane'
+import { EmptyState } from './components/EmptyState'
 
-function App() {
-  const [greetMsg, setGreetMsg] = useState("");
-  const [name, setName] = useState("");
+export default function App() {
+  const {
+    currentProject,
+    viewList,
+    openTabs,
+    activeTab,
+    openProject,
+    openView,
+    closeTab,
+    refreshViewList,
+  } = useProjectStore()
 
-  async function greet() {
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    setGreetMsg(await invoke("greet", { name }));
+  const [projectName, setProjectName] = useState<string | null>(null)
+  const [activeHtml, setActiveHtml] = useState<string | null>(null)
+
+  // On startup: try to restore the last project.
+  useEffect(() => {
+    ;(async () => {
+      const last = await loadLastProject()
+      if (last) await tryOpenProjectAt(last)
+    })()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Update the project name display whenever currentProject changes.
+  useEffect(() => {
+    ;(async () => {
+      setProjectName(currentProject ? await pathBasename(currentProject) : null)
+    })()
+  }, [currentProject])
+
+  // Load the active tab's HTML whenever activeTab or currentProject changes.
+  useEffect(() => {
+    ;(async () => {
+      if (!currentProject || !activeTab) {
+        setActiveHtml(null)
+        return
+      }
+      try {
+        const html = await readViewFile(currentProject, activeTab)
+        setActiveHtml(html)
+      } catch (err) {
+        console.error('readViewFile failed:', err)
+        setActiveHtml(`<p style="font-family:sans-serif;padding:24px;color:#a00">Failed to read ${activeTab}: ${String(err)}</p>`)
+      }
+    })()
+  }, [currentProject, activeTab])
+
+  async function tryOpenProjectAt(path: string) {
+    try {
+      const files = await listHtmlFiles(path)
+      openProject(path, files)
+      await saveLastProject(path)
+    } catch (err) {
+      console.error('Failed to open project:', err)
+    }
+  }
+
+  async function handleOpenProject() {
+    const path = await pickFolder()
+    if (path) await tryOpenProjectAt(path)
+  }
+
+  async function handleOpenSample() {
+    const samplePath = await seedSampleProjectIfMissing()
+    if (samplePath) {
+      await tryOpenProjectAt(samplePath)
+    } else {
+      console.error('Failed to seed sample project')
+    }
+  }
+
+  async function handleRefresh() {
+    if (!currentProject) return
+    try {
+      const files = await listHtmlFiles(currentProject)
+      refreshViewList(files)
+    } catch (err) {
+      console.error('refresh failed:', err)
+    }
+  }
+
+  if (!currentProject) {
+    return (
+      <EmptyState
+        onOpenProject={handleOpenProject}
+        onOpenSample={handleOpenSample}
+      />
+    )
   }
 
   return (
-    <main className="container">
-      <h1>Welcome to Tauri + React</h1>
-
-      <div className="row">
-        <a href="https://vite.dev" target="_blank">
-          <img src="/vite.svg" className="logo vite" alt="Vite logo" />
-        </a>
-        <a href="https://tauri.app" target="_blank">
-          <img src="/tauri.svg" className="logo tauri" alt="Tauri logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <p>Click on the Tauri, Vite, and React logos to learn more.</p>
-
-      <form
-        className="row"
-        onSubmit={(e) => {
-          e.preventDefault();
-          greet();
-        }}
-      >
-        <input
-          id="greet-input"
-          onChange={(e) => setName(e.currentTarget.value)}
-          placeholder="Enter a name..."
+    <div className="app">
+      <TopBar projectName={projectName} onOpenProject={handleOpenProject} />
+      <div className="app-body">
+        <Sidebar
+          views={viewList}
+          activeView={activeTab}
+          onSelect={openView}
+          onRefresh={handleRefresh}
         />
-        <button type="submit">Greet</button>
-      </form>
-      <p>{greetMsg}</p>
-    </main>
-  );
+        <main className="viewer">
+          <TabStrip
+            tabs={openTabs}
+            activeTab={activeTab}
+            onActivate={openView}
+            onClose={closeTab}
+          />
+          <ViewerPane html={activeHtml} viewKey={activeTab} />
+        </main>
+      </div>
+    </div>
+  )
 }
-
-export default App;

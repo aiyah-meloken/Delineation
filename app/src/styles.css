@@ -1,0 +1,59 @@
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body { font-family: system-ui, -apple-system, sans-serif; color: #1e1e1e; background: #fafafa; }
+
+.app { display: flex; flex-direction: column; height: 100%; }
+.app-body { display: flex; flex: 1; min-height: 0; }
+
+.top-bar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 14px; border-bottom: 1px solid #ddd; background: #fff;
+}
+.project-name { font-weight: 600; }
+
+.sidebar {
+  width: 240px; border-right: 1px solid #ddd; background: #f4f4f4;
+  display: flex; flex-direction: column;
+}
+.sidebar-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 10px 12px; border-bottom: 1px solid #e3e3e3; font-size: 12px;
+  text-transform: uppercase; letter-spacing: 0.04em; color: #666;
+}
+.view-list { list-style: none; margin: 0; padding: 4px 0; overflow-y: auto; flex: 1; }
+.view-list li { padding: 6px 14px; cursor: pointer; }
+.view-list li:hover { background: #e9e9e9; }
+.view-list li.active { background: #d8e4ff; color: #1c4ad6; }
+.empty-hint { color: #888; font-style: italic; }
+
+.viewer { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.tab-strip {
+  display: flex; border-bottom: 1px solid #ddd; background: #fff;
+  overflow-x: auto;
+}
+.tab {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 12px; border-right: 1px solid #eee; cursor: pointer;
+  white-space: nowrap;
+}
+.tab.active { background: #fafafa; border-bottom: 2px solid #1c4ad6; }
+.tab .close {
+  border: none; background: transparent; cursor: pointer;
+  font-size: 14px; padding: 0 4px; color: #888;
+}
+.tab .close:hover { color: #c00; }
+
+.viewer-iframe { flex: 1; border: none; background: #fff; }
+.viewer-empty {
+  flex: 1; display: flex; align-items: center; justify-content: center; color: #888;
+}
+
+.empty-state {
+  height: 100%;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 16px; padding: 24px;
+}
+.empty-state-buttons { display: flex; gap: 12px; }
+button { padding: 6px 12px; border: 1px solid #bbb; background: #fff; border-radius: 4px; cursor: pointer; }
+button.primary { background: #1c4ad6; color: #fff; border-color: #1c4ad6; }
+button:hover { filter: brightness(0.97); }
