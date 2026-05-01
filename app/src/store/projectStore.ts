@@ -17,7 +17,7 @@ const initialState = {
   viewList: [],
   openTabs: [],
   activeTab: null,
-} satisfies Omit<ProjectState, 'reset'>
+} satisfies Omit<ProjectState, 'reset' | 'openProject' | 'openView' | 'closeTab' | 'refreshViewList'>
 
 export const useProjectStore = create<ProjectState>((set) => ({
   ...initialState,
