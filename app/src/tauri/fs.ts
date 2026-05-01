@@ -1,6 +1,6 @@
 import { open } from '@tauri-apps/plugin-dialog'
 import { readDir, readTextFile } from '@tauri-apps/plugin-fs'
-import { basename } from '@tauri-apps/api/path'
+import { basename, join } from '@tauri-apps/api/path'
 
 /** Opens a folder picker. Returns absolute path or null if cancelled. */
 export async function pickFolder(): Promise<string | null> {
@@ -20,7 +20,8 @@ export async function listHtmlFiles(projectPath: string): Promise<string[]> {
 
 /** Reads a view file's text contents. */
 export async function readViewFile(projectPath: string, filename: string): Promise<string> {
-  return readTextFile(`${projectPath}/${filename}`)
+  const fullPath = await join(projectPath, filename)
+  return readTextFile(fullPath)
 }
 
 /** Returns the basename of a path (last segment). */
