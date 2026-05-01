@@ -8,6 +8,8 @@ export interface ProjectState {
   reset: () => void
   openProject: (path: string, htmlFiles: string[]) => void
   openView: (filename: string) => void
+  closeTab: (filename: string) => void
+  refreshViewList: (htmlFiles: string[]) => void
 }
 
 const initialState = {
@@ -35,4 +37,22 @@ export const useProjectStore = create<ProjectState>((set) => ({
         activeTab: filename,
       }
     }),
+  closeTab: (filename) =>
+    set((state) => {
+      const idx = state.openTabs.indexOf(filename)
+      if (idx === -1) return state
+      const nextTabs = state.openTabs.filter((t) => t !== filename)
+      let nextActive = state.activeTab
+      if (state.activeTab === filename) {
+        if (nextTabs.length === 0) {
+          nextActive = null
+        } else {
+          // Prefer right neighbor (same index), else left neighbor (idx - 1)
+          nextActive = nextTabs[idx] ?? nextTabs[idx - 1] ?? null
+        }
+      }
+      return { openTabs: nextTabs, activeTab: nextActive }
+    }),
+  refreshViewList: (htmlFiles) =>
+    set({ viewList: [...htmlFiles].sort((a, b) => a.localeCompare(b)) }),
 }))
