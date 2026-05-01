@@ -25,10 +25,14 @@ export default function App() {
   const [activeHtml, setActiveHtml] = useState<string | null>(null)
 
   // On startup: try to restore the last project.
+  // If the restore fails (e.g., folder was moved/deleted), clear the stored path
+  // so the user lands on EmptyState cleanly on subsequent launches.
   useEffect(() => {
     ;(async () => {
       const last = await loadLastProject()
-      if (last) await tryOpenProjectAt(last)
+      if (!last) return
+      const ok = await tryOpenProjectAt(last)
+      if (!ok) await saveLastProject(null)
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -57,13 +61,15 @@ export default function App() {
     })()
   }, [currentProject, activeTab])
 
-  async function tryOpenProjectAt(path: string) {
+  async function tryOpenProjectAt(path: string): Promise<boolean> {
     try {
       const files = await listHtmlFiles(path)
       openProject(path, files)
       await saveLastProject(path)
+      return true
     } catch (err) {
       console.error('Failed to open project:', err)
+      return false
     }
   }
 
