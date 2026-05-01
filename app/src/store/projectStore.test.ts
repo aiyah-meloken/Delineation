@@ -40,3 +40,34 @@ describe('openProject', () => {
     expect(s.activeTab).toBeNull()
   })
 })
+
+describe('openView', () => {
+  beforeEach(() => {
+    useProjectStore.getState().reset()
+    useProjectStore.getState().openProject('/p', ['a.html', 'b.html', 'c.html'])
+  })
+
+  it('opens a new tab and activates it', () => {
+    useProjectStore.getState().openView('a.html')
+    const s = useProjectStore.getState()
+    expect(s.openTabs).toEqual(['a.html'])
+    expect(s.activeTab).toBe('a.html')
+  })
+
+  it('appends new tabs in click order', () => {
+    useProjectStore.getState().openView('b.html')
+    useProjectStore.getState().openView('a.html')
+    const s = useProjectStore.getState()
+    expect(s.openTabs).toEqual(['b.html', 'a.html'])
+    expect(s.activeTab).toBe('a.html')
+  })
+
+  it('does not duplicate an already-open tab; just activates it', () => {
+    useProjectStore.getState().openView('a.html')
+    useProjectStore.getState().openView('b.html')
+    useProjectStore.getState().openView('a.html')
+    const s = useProjectStore.getState()
+    expect(s.openTabs).toEqual(['a.html', 'b.html'])
+    expect(s.activeTab).toBe('a.html')
+  })
+})
