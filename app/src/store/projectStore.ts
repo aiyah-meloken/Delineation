@@ -6,6 +6,7 @@ export interface ProjectState {
   openTabs: string[]              // filenames currently open as tabs
   activeTab: string | null        // currently focused tab filename
   reset: () => void
+  openProject: (path: string, htmlFiles: string[]) => void
 }
 
 const initialState = {
@@ -18,4 +19,11 @@ const initialState = {
 export const useProjectStore = create<ProjectState>((set) => ({
   ...initialState,
   reset: () => set(initialState),
+  openProject: (path, htmlFiles) =>
+    set({
+      currentProject: path,
+      viewList: [...htmlFiles].sort((a, b) => a.localeCompare(b)),
+      openTabs: [],
+      activeTab: null,
+    }),
 }))
