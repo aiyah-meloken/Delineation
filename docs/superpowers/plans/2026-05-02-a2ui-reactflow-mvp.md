@@ -1148,7 +1148,7 @@ git commit -m "feat(acp): scaffold acp module + embed system prompt"
 - Modify: `app/src-tauri/src/acp/client.rs`
 - Modify: `app/src-tauri/src/lib.rs` (commands + state)
 
-> **Engineer note:** This task uses the [`agent-client-protocol` crate](https://crates.io/crates/agent-client-protocol) (Zed's official ACP client). Read its README before starting — the API gives you a `Client` builder that connects to a child process speaking ACP over stdio. If the crate's API differs slightly from what's shown below (e.g., method names changed in a newer version), adapt while preserving behavior. **Verify the `claude` CLI invocation up front** with `claude --help` to confirm the ACP / external-driver flag (commonly `--print --output-format stream-json --input-format stream-json` or a dedicated `--acp` mode depending on the Claude Code version). Pin the exact argv vector in the const at the top of `client.rs` and note it in the commit message.
+> **Engineer note (corrected after CLI inspection):** Claude Code 2.1.x does **not** speak ACP natively — it speaks its own `stream-json` protocol. To bridge, we spawn the **`@zed-industries/claude-code-acp` adapter** (an npm package, currently v0.16.2), which internally launches `claude` and exposes an ACP-speaking stdio interface. Tauri's Rust side uses the [`agent-client-protocol` crate](https://crates.io/crates/agent-client-protocol) to drive the adapter. Read both the crate README and `npm view @zed-industries/claude-code-acp` before starting; adapt the calls below if either API has shifted by the time you implement. The adapter and `claude` CLI must both be installed on the user's machine (manual acceptance Task 18 verifies).
 
 - [ ] **Step 1: Add deps**
 
@@ -1161,14 +1161,14 @@ cargo add anyhow
 cargo add async-trait
 ```
 
-- [ ] **Step 2: Identify the agent invocation**
+- [ ] **Step 2: Verify adapter availability**
 
-Run interactively (do not commit output to the plan):
 ```
-claude --help | head -50
+which claude
+claude --version
+npm view @zed-industries/claude-code-acp version
 ```
-
-Note the exact flags that put Claude Code into stdio-driven JSON-RPC mode. Pin it as a const at the top of `client.rs` (next step). If you cannot identify the flag, run `which claude` to confirm presence and consult Claude Code's docs at <https://docs.anthropic.com/en/docs/claude-code/sdk> — the official ACP integration may be invoked as `claude` with a specific subcommand.
+Expected: `claude` resolves (Claude Code installed); npm view prints a version string (the adapter package exists and `npx` can fetch it). The actual adapter is launched via `npx -y @zed-industries/claude-code-acp@<version>`.
 
 - [ ] **Step 3: Implement `client.rs`**
 
@@ -1184,9 +1184,10 @@ use uuid::Uuid;
 use crate::a2ui::{parse_a2ui_block, A2UIGraph};
 use crate::acp::prompts::SYSTEM_PROMPT;
 
-/// Pin the exact agent argv determined in Step 2. Update this single constant
-/// if Claude Code's flags change.
-pub const CLAUDE_ARGV: &[&str] = &["claude", "--acp"]; // VERIFY in Step 2 and adjust.
+/// Adapter argv. We spawn the Zed-published claude-code-acp adapter via npx.
+/// The adapter internally spawns `claude` and exposes ACP over stdio.
+/// Pinning the version keeps behavior reproducible across machines.
+pub const ADAPTER_ARGV: &[&str] = &["npx", "-y", "@zed-industries/claude-code-acp@0.16"];
 
 /// Public types emitted to the frontend via Tauri events.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -1237,8 +1238,8 @@ pub async fn start_session(app: AppHandle, project_path: String) -> Result<Strin
     let session_id = Uuid::new_v4().to_string();
 
     // 1) Spawn the subprocess.
-    //    Construct a tokio::process::Command using CLAUDE_ARGV[0] as the program
-    //    and CLAUDE_ARGV[1..] as args. Set current_dir(&project_path),
+    //    Construct a tokio::process::Command using ADAPTER_ARGV[0] as the program
+    //    and ADAPTER_ARGV[1..] as args. Set current_dir(&project_path),
     //    stdin/stdout/stderr piped.
     //
     // 2) Hand the child to the agent-client-protocol crate to initialize the ACP client.
@@ -2271,9 +2272,10 @@ Confirm:
 ```
 claude --version          # any version output
 which claude              # in $PATH
+npx -y @zed-industries/claude-code-acp@0.16 --version 2>&1 | head -3
 ```
 
-If either fails, install Claude Code per <https://docs.anthropic.com/en/docs/claude-code/installation> and ensure the user is logged in (`claude login` or whichever auth flow the version uses).
+If `claude` is missing, install Claude Code and ensure the user is authenticated. The npx invocation should print or at least not error — first run downloads the adapter (~10-30s).
 
 - [ ] **Step 2: Launch the app**
 
