@@ -12,24 +12,32 @@ impl std::fmt::Display for ParseError {
     }
 }
 
-pub fn parse_a2ui_block(text: &str) -> Result<A2UIGraph, ParseError> {
+/// Parse the agent's final assistant message for an A2UI graph.
+///
+/// Returns:
+/// - `Ok(None)` — no `a2ui` fenced block found. This is normal: the agent is
+///   chatting / asking clarifying questions / not ready to draw yet.
+/// - `Ok(Some(graph))` — block found and valid; canvas should be updated.
+/// - `Err(msg)` — block was found but malformed (bad JSON, schema violation).
+///   The chat surfaces this as an error so the user can ask the agent to retry.
+pub fn parse_a2ui_block(text: &str) -> Result<Option<A2UIGraph>, ParseError> {
     let re = Regex::new(r"(?s)```a2ui\s*\n(.*?)\n```")
         .map_err(|e| ParseError(format!("regex compile: {e}")))?;
 
     let captures: Vec<_> = re.captures_iter(text).collect();
-    let last = captures
-        .last()
-        .ok_or_else(|| ParseError("no a2ui block found in agent output".into()))?;
+    let Some(last) = captures.last() else {
+        return Ok(None);
+    };
     let body = last
         .get(1)
         .map(|m| m.as_str())
-        .ok_or_else(|| ParseError("no a2ui block content".into()))?;
+        .ok_or_else(|| ParseError("a2ui block has no content".into()))?;
 
     let graph: A2UIGraph = serde_json::from_str(body)
         .map_err(|e| ParseError(format!("invalid json in a2ui block: {e}")))?;
 
     validate(&graph)?;
-    Ok(graph)
+    Ok(Some(graph))
 }
 
 fn validate(g: &A2UIGraph) -> Result<(), ParseError> {
@@ -113,7 +121,9 @@ analysis text...
 
     #[test]
     fn parses_valid_block() {
-        let g = parse_a2ui_block(VALID).expect("should parse");
+        let g = parse_a2ui_block(VALID)
+            .expect("should parse")
+            .expect("should be Some");
         assert_eq!(g.nodes.len(), 2);
         assert_eq!(g.edges.len(), 1);
         assert_eq!(g.meta.version, "0.1");
@@ -133,15 +143,18 @@ some prose
   "edges": [] }
 ```
 "#;
-        let g = parse_a2ui_block(text).expect("should parse");
+        let g = parse_a2ui_block(text)
+            .expect("should parse")
+            .expect("should be Some");
         assert_eq!(g.nodes.len(), 1);
         assert_eq!(g.nodes[0].id, "x");
     }
 
     #[test]
-    fn errors_when_no_block() {
-        let err = parse_a2ui_block("just prose, no graph").unwrap_err();
-        assert!(err.0.to_lowercase().contains("no a2ui block"));
+    fn returns_none_when_no_block() {
+        // No block is the normal "still chatting" case — must NOT be an error.
+        let result = parse_a2ui_block("just prose, no graph").expect("should not error");
+        assert!(result.is_none());
     }
 
     #[test]

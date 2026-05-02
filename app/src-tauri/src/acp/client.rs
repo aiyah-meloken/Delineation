@@ -22,10 +22,11 @@ use crate::acp::prompts::SYSTEM_PROMPT;
 
 // ─── Public constants ─────────────────────────────────────────────────────────
 
-/// Adapter argv. We spawn the Zed-published claude-code-acp adapter via npx.
+/// Adapter argv. We spawn the official ACP adapter via npx (renamed from
+/// the deprecated @zed-industries/claude-code-acp).
 /// The adapter internally spawns `claude` and exposes ACP over stdio.
 /// Pinning the minor version keeps behaviour reproducible across machines.
-pub const ADAPTER_ARGV: &[&str] = &["npx", "-y", "@zed-industries/claude-code-acp@0.16"];
+pub const ADAPTER_ARGV: &[&str] = &["npx", "-y", "@agentclientprotocol/claude-agent-acp@0.31"];
 
 // ─── Public event payload types ───────────────────────────────────────────────
 
@@ -341,8 +342,15 @@ pub async fn send_prompt(app: AppHandle, session_id: String, text: String) -> Re
         .map_err(|_| anyhow!("reply channel dropped — connection task may have crashed"))??;
 
     // Parse and emit events.
+    //
+    // Three cases:
+    //   Ok(Some(graph)) — agent produced a valid graph; update the canvas.
+    //   Ok(None)        — agent is just chatting (clarifying, asking questions);
+    //                     leave canvas alone and treat the turn as success.
+    //   Err(e)          — agent emitted a fenced block but it's malformed;
+    //                     surface the error so the user can ask for a retry.
     match parse_a2ui_block(&accumulated) {
-        Ok(graph) => {
+        Ok(Some(graph)) => {
             let _ = app.emit(
                 "a2ui://graph",
                 GraphEvent {
@@ -350,6 +358,16 @@ pub async fn send_prompt(app: AppHandle, session_id: String, text: String) -> Re
                     graph,
                 },
             );
+            let _ = app.emit(
+                "acp://turn-ended",
+                TurnEndedEvent {
+                    session_id,
+                    success: true,
+                    parse_error: None,
+                },
+            );
+        }
+        Ok(None) => {
             let _ = app.emit(
                 "acp://turn-ended",
                 TurnEndedEvent {
