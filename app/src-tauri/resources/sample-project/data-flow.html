@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Data Flow</title>
+<style>
+body{font-family:system-ui,sans-serif;padding:32px;color:#222;line-height:1.5;max-width:760px}
+.node{display:inline-block;border:1.5px solid #444;border-radius:6px;padding:8px 14px;margin:4px;background:#fff}
+.arrow{display:inline-block;margin:0 4px;color:#666}
+</style></head>
+<body>
+<h1>Data Flow</h1>
+<p>Ingest pipeline, left to right:</p>
+<p>
+  <span class="node">Source</span><span class="arrow">→</span>
+  <span class="node">Validate</span><span class="arrow">→</span>
+  <span class="node">Enrich</span><span class="arrow">→</span>
+  <span class="node">Store</span>
+</p>
+<p>Failure mode: validation rejects route to a dead-letter topic; enrichment is idempotent so retries are safe.</p>
+</body></html>

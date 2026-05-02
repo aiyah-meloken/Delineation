@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Overview</title>
+<style>
+body{font-family:system-ui,sans-serif;padding:32px;color:#222;line-height:1.5;max-width:760px}
+svg{display:block;margin:24px 0}
+.box{fill:#fff;stroke:#444;stroke-width:1.5}
+.lbl{font-size:13px;fill:#222}
+</style></head>
+<body>
+<h1>System Overview</h1>
+<p>This is a sample architecture view. Each rectangle is a service; arrows show calls.</p>
+<svg viewBox="0 0 520 200" width="520" height="200">
+  <rect class="box" x="20" y="40" width="120" height="60" rx="6"/>
+  <text class="lbl" x="80" y="75" text-anchor="middle">Client</text>
+  <rect class="box" x="200" y="40" width="120" height="60" rx="6"/>
+  <text class="lbl" x="260" y="75" text-anchor="middle">API Gateway</text>
+  <rect class="box" x="380" y="40" width="120" height="60" rx="6"/>
+  <text class="lbl" x="440" y="75" text-anchor="middle">Worker</text>
+  <line x1="140" y1="70" x2="200" y2="70" stroke="#444" marker-end="url(#a)"/>
+  <line x1="320" y1="70" x2="380" y2="70" stroke="#444" marker-end="url(#a)"/>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L10,5 L0,10 z" fill="#444"/></marker></defs>
+</svg>
+<p>Notes: the Worker pulls jobs from a queue (not shown). Latency budget: 200ms p95 for the gateway hop.</p>
+</body></html>
