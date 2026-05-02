@@ -95,7 +95,9 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProject, activeTab])
 
-  // Subscribe to ACP events (mounted once).
+  // Subscribe to ACP events. Re-runs when currentProject changes so the
+  // onGraph handler closes over the right project path for writeViewGraph.
+  // Cleanup unmounts the old listeners before new ones register.
   useEffect(() => {
     let unsub1: (() => void) | null = null
     let unsub2: (() => void) | null = null

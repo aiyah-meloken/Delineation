@@ -189,4 +189,26 @@ some prose
         let err = parse_a2ui_block(text).unwrap_err();
         assert!(err.0.to_lowercase().contains("missing") || err.0.to_lowercase().contains("unknown"));
     }
+
+    #[test]
+    fn errors_on_dangling_position_hint_after() {
+        let text = r#"
+```a2ui
+{ "meta": { "version": "0.1", "layoutMode": "flow" },
+  "nodes": [
+    { "id": "a", "type": "step", "label": "A",
+      "positionHint": { "after": "ghost" } }
+  ],
+  "edges": [] }
+```
+"#;
+        let err = parse_a2ui_block(text).unwrap_err();
+        let msg = err.0.to_lowercase();
+        assert!(
+            msg.contains("missing") || msg.contains("unknown"),
+            "expected missing/unknown in error, got: {}",
+            err.0
+        );
+        assert!(msg.contains("after"), "expected 'after' in error, got: {}", err.0);
+    }
 }

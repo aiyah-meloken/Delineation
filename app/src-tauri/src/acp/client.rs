@@ -381,16 +381,16 @@ pub async fn send_prompt(app: AppHandle, session_id: String, text: String) -> Re
 /// process (`kill_on_drop(true)` ensures the adapter exits).
 pub async fn cancel(app: AppHandle, session_id: String) -> Result<()> {
     let state = app.state::<AcpState>();
-    let mut map = state.sessions.lock().await;
-    if let Some(sess_arc) = map.remove(&session_id) {
-        // Dropping the Arc may or may not free the session immediately (if
-        // send_prompt is concurrently holding it). The JoinHandle abort ensures
-        // the task exits regardless. abort() is non-blocking — it just signals
-        // cancellation — so holding the session lock here is safe and brief.
-        let sess = sess_arc.lock().await;
-        sess._task.abort();
-        // Explicit drop isn't strictly needed but makes intent clear.
-        drop(sess);
+    // Release the outer map lock before touching the session arc, so a
+    // concurrent send_prompt mid-turn doesn't stall start_session for a new tab.
+    let sess_arc = {
+        let mut map = state.sessions.lock().await;
+        map.remove(&session_id)
+    };
+    if let Some(sess_arc) = sess_arc {
+        // abort() is non-blocking. kill_on_drop(true) on the spawned Command
+        // ensures the adapter subprocess dies as the task unwinds.
+        sess_arc.lock().await._task.abort();
     }
     Ok(())
 }
