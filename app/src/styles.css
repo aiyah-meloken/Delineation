@@ -109,3 +109,11 @@ button:hover { filter: brightness(0.97); }
   color: #888; border: 1px solid #ddd; border-radius: 3px; padding: 1px 5px;
 }
 .view-kind.kind-canvas { color: #1c4ad6; border-color: #b8c8f0; }
+
+.terminal-host {
+  flex: 1; min-height: 0; height: 100%;
+  background: #1e1e1e; padding: 8px;
+  display: flex; flex-direction: column;
+}
+.terminal-host .xterm { flex: 1; min-height: 0; }
+.terminal-host .xterm-viewport { background-color: transparent !important; }

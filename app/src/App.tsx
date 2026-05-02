@@ -1,6 +1,5 @@
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState } from 'react'
 import { useProjectStore } from './store/projectStore'
-import { useChatStore } from './store/chatStore'
 import { useCanvasStore } from './store/canvasStore'
 import {
   pickFolder,
@@ -11,20 +10,12 @@ import {
 } from './tauri/fs'
 import { loadLastProject, saveLastProject } from './tauri/persistence'
 import { seedSampleProjectIfMissing } from './seed/seedSampleProject'
-import {
-  startAcpSession,
-  sendAcpPrompt,
-  cancelAcpSession,
-  onChunk,
-  onTurnEnded,
-  onGraph,
-} from './tauri/acp'
 import { emptyGraph, isValidA2UIGraph, type A2UIGraph } from './a2ui/schema'
 import { TopBar } from './components/TopBar'
 import { Sidebar } from './components/Sidebar'
 import { TabStrip } from './components/TabStrip'
 import { ViewerPane } from './components/ViewerPane'
-import { ChatPanel } from './components/ChatPanel'
+import { TerminalPanel } from './components/TerminalPanel'
 import { EmptyState } from './components/EmptyState'
 
 const DEFAULT_CANVAS_NAME = 'Untitled.a2ui.json'
@@ -41,12 +32,10 @@ export default function App() {
     refreshViewList,
   } = useProjectStore()
 
-  const chat = useChatStore()
   const canvas = useCanvasStore()
 
   const [projectName, setProjectName] = useState<string | null>(null)
   const [activeHtml, setActiveHtml] = useState<string | null>(null)
-  const sessionMap = useRef<Record<string, string>>({}) // filename → session_id
 
   // Restore last project (with stale-clear, same as MVP1).
   useEffect(() => {
@@ -94,63 +83,6 @@ export default function App() {
     })()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProject, activeTab])
-
-  // Subscribe to ACP events. Re-runs when currentProject changes so the
-  // onGraph handler closes over the right project path for writeViewGraph.
-  // Cleanup unmounts the old listeners before new ones register.
-  useEffect(() => {
-    let unsub1: (() => void) | null = null
-    let unsub2: (() => void) | null = null
-    let unsub3: (() => void) | null = null
-    ;(async () => {
-      unsub1 = await onChunk(({ session_id, delta }) => {
-        const filename = filenameForSession(session_id)
-        if (filename) chat.appendAssistantChunk(filename, delta)
-      })
-      unsub2 = await onTurnEnded(({ session_id, success, parse_error }) => {
-        const filename = filenameForSession(session_id)
-        if (!filename) return
-        chat.endTurn(filename, { success, parseError: parse_error })
-      })
-      unsub3 = await onGraph(({ session_id, graph }) => {
-        const filename = filenameForSession(session_id)
-        if (!filename || !currentProject) return
-        canvas.setGraph(filename, graph)
-        // Persist to disk (overwrite the active .a2ui.json view).
-        writeViewGraph(currentProject, filename, graph).catch((err) =>
-          console.error('writeViewGraph failed:', err),
-        )
-      })
-    })()
-    return () => {
-      unsub1?.()
-      unsub2?.()
-      unsub3?.()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentProject])
-
-  function filenameForSession(sessionId: string): string | null {
-    for (const [filename, sid] of Object.entries(sessionMap.current)) {
-      if (sid === sessionId) return filename
-    }
-    return null
-  }
-
-  async function ensureSession(filename: string): Promise<string | null> {
-    if (!currentProject) return null
-    const existing = sessionMap.current[filename]
-    if (existing) return existing
-    try {
-      const sid = await startAcpSession(currentProject)
-      sessionMap.current[filename] = sid
-      return sid
-    } catch (err) {
-      console.error('startAcpSession failed:', err)
-      chat.endTurn(filename, { success: false, parseError: `failed to start agent: ${String(err)}` })
-      return null
-    }
-  }
 
   async function tryOpenProjectAt(path: string): Promise<boolean> {
     try {
@@ -203,28 +135,18 @@ export default function App() {
     }
   }
 
-  async function handleSendChat(text: string) {
-    if (!activeTab || !activeTab.toLowerCase().endsWith('.a2ui.json')) return
-    chat.appendUserMessage(activeTab, text)
-    const sid = await ensureSession(activeTab)
-    if (!sid) return
-    try {
-      await sendAcpPrompt(sid, text)
-    } catch (err) {
-      console.error('sendAcpPrompt failed:', err)
-      chat.endTurn(activeTab, { success: false, parseError: String(err) })
-    }
+  function handleCloseTab(filename: string) {
+    closeTab(filename)
+    canvas.discard(filename)
+    // TerminalPanel unmounts on closeTab and calls killTerminal in its own cleanup.
   }
 
-  async function handleCloseTab(filename: string) {
-    closeTab(filename)
-    const sid = sessionMap.current[filename]
-    if (sid) {
-      cancelAcpSession(sid).catch((err) => console.error('cancelAcpSession:', err))
-      delete sessionMap.current[filename]
-      chat.discardSession(filename)
-      canvas.discard(filename)
-    }
+  function handleGraphReady(graph: A2UIGraph) {
+    if (!activeTab || !currentProject) return
+    canvas.setGraph(activeTab, graph)
+    writeViewGraph(currentProject, activeTab, graph).catch((err) =>
+      console.error('writeViewGraph failed:', err),
+    )
   }
 
   if (!currentProject) {
@@ -234,7 +156,6 @@ export default function App() {
   }
 
   const isCanvas = activeTab?.toLowerCase().endsWith('.a2ui.json') ?? false
-  const session = activeTab ? chat.sessions[activeTab] : undefined
 
   return (
     <div className="app">
@@ -259,14 +180,12 @@ export default function App() {
               filename={activeTab}
               html={activeHtml}
               graph={activeTab ? canvas.getGraph(activeTab) : null}
-              parseError={session?.parseError}
             />
-            {isCanvas && activeTab && (
-              <ChatPanel
-                messages={session?.messages ?? []}
-                isStreaming={session?.isStreaming ?? false}
-                parseError={session?.parseError ?? null}
-                onSend={handleSendChat}
+            {isCanvas && activeTab && currentProject && (
+              <TerminalPanel
+                projectPath={currentProject}
+                paneKey={activeTab}
+                onGraphReady={handleGraphReady}
               />
             )}
           </div>
