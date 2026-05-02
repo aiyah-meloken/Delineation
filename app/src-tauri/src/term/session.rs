@@ -42,14 +42,23 @@ fn strip_ansi(s: &str) -> String {
     osc.replace_all(&s, "").to_string()
 }
 
-pub async fn spawn(app: AppHandle, project_path: String) -> Result<String> {
+pub async fn spawn(
+    app: AppHandle,
+    project_path: String,
+    cols: u16,
+    rows: u16,
+) -> Result<String> {
     let session_id = Uuid::new_v4().to_string();
+
+    // Sanitize the size — xterm.js may report 0 during the first paint frame.
+    let cols = if cols == 0 { 80 } else { cols };
+    let rows = if rows == 0 { 24 } else { rows };
 
     let pty_system = native_pty_system();
     let pair = pty_system
         .openpty(PtySize {
-            rows: 24,
-            cols: 80,
+            rows,
+            cols,
             pixel_width: 0,
             pixel_height: 0,
         })
@@ -63,6 +72,16 @@ pub async fn spawn(app: AppHandle, project_path: String) -> Result<String> {
     // Ensure PATH is inherited so `claude` resolves from ~/.local/bin or wherever it's installed.
     if let Ok(path) = std::env::var("PATH") {
         cmd.env("PATH", path);
+    }
+    // Tell child its terminal is xterm-256color so TUI apps (claude's Ink UI)
+    // pick the right escape sequences and don't fall back to a degraded mode
+    // that triggers excessive redraws.
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("LANG", std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into()));
+    // Pass HOME through (claude reads ~/.claude/* config).
+    if let Ok(home) = std::env::var("HOME") {
+        cmd.env("HOME", home);
     }
 
     let child = pair

@@ -8,8 +8,13 @@ use crate::term::session::{
 use tauri::AppHandle;
 
 #[tauri::command]
-async fn term_spawn(app: AppHandle, project_path: String) -> Result<String, String> {
-    term_spawn_inner(app, project_path)
+async fn term_spawn(
+    app: AppHandle,
+    project_path: String,
+    cols: u16,
+    rows: u16,
+) -> Result<String, String> {
+    term_spawn_inner(app, project_path, cols, rows)
         .await
         .map_err(|e| e.to_string())
 }
