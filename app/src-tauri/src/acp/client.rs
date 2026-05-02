@@ -145,8 +145,9 @@ pub async fn start_session(app: AppHandle, project_path: String) -> Result<Strin
 
         let result = Client
             .builder()
-            // Auto-approve all permission requests. For an MVP this is intentional;
-            // a production version would surface them to the frontend.
+            // TODO(mvp): auto-approves all agent permission requests (file writes,
+            // shell, network, etc.). Replace with a frontend dialog before any
+            // non-developer build. Tracked: revisit once chat panel can show prompts.
             .on_receive_request(
                 async move |request: RequestPermissionRequest, responder, _cx| {
                     let option_id = request.options.first().map(|opt| opt.option_id.clone());
@@ -384,7 +385,8 @@ pub async fn cancel(app: AppHandle, session_id: String) -> Result<()> {
     if let Some(sess_arc) = map.remove(&session_id) {
         // Dropping the Arc may or may not free the session immediately (if
         // send_prompt is concurrently holding it). The JoinHandle abort ensures
-        // the task exits regardless.
+        // the task exits regardless. abort() is non-blocking — it just signals
+        // cancellation — so holding the session lock here is safe and brief.
         let sess = sess_arc.lock().await;
         sess._task.abort();
         // Explicit drop isn't strictly needed but makes intent clear.
