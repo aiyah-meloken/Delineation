@@ -10,7 +10,7 @@ describe('isValidA2UIGraph', () => {
   it('rejects wrong version', () => {
     const r = isValidA2UIGraph({ meta: { version: '0.2', layoutMode: 'flow' }, nodes: [], edges: [] })
     expect(r.ok).toBe(false)
-    expect(r.reason).toMatch(/version/i)
+    if (!r.ok) expect(r.reason).toMatch(/version/i)
   })
 
   it('rejects duplicate node ids', () => {
@@ -23,7 +23,7 @@ describe('isValidA2UIGraph', () => {
       edges: [],
     })
     expect(r.ok).toBe(false)
-    expect(r.reason).toMatch(/duplicate/i)
+    if (!r.ok) expect(r.reason).toMatch(/duplicate/i)
   })
 
   it('rejects edge with unknown endpoint', () => {
@@ -33,7 +33,7 @@ describe('isValidA2UIGraph', () => {
       edges: [{ id: 'e1', from: 'a', to: 'b' }],
     })
     expect(r.ok).toBe(false)
-    expect(r.reason).toMatch(/edge/i)
+    if (!r.ok) expect(r.reason).toMatch(/edge/i)
   })
 
   it('rejects positionHint.after referencing missing node', () => {
