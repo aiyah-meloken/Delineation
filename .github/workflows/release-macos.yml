@@ -68,7 +68,7 @@ jobs:
           projectPath: app
           tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           releaseName: Delineation ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
-          releaseDraft: true
+          releaseDraft: false
           prerelease: false
           args: --target universal-apple-darwin
           includeUpdaterJson: true
