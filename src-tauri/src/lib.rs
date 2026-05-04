@@ -6,7 +6,7 @@ use crate::term::session::{
     resize as term_resize_inner, spawn as term_spawn_inner, write as term_write_inner,
     TermState, TerminalProfile, TerminalProfileId,
 };
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 #[tauri::command]
 async fn term_spawn(
@@ -52,6 +52,15 @@ async fn term_kill(app: AppHandle, session_id: String) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+fn open_inspector(app: AppHandle) -> Result<(), String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    window.open_devtools();
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -66,7 +75,8 @@ pub fn run() {
             term_available_profiles,
             term_write,
             term_resize,
-            term_kill
+            term_kill,
+            open_inspector
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

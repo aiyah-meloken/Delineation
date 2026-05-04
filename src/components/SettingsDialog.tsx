@@ -1,4 +1,4 @@
-import { RotateCw, X } from 'lucide-react'
+import { Bug, RotateCw, X } from 'lucide-react'
 import type { AppInfo, UpdateState } from '../tauri/update'
 
 interface Props {
@@ -6,6 +6,7 @@ interface Props {
   updateState: UpdateState
   onClose: () => void
   onRestartToUpdate: () => void
+  onOpenInspector: () => void
 }
 
 function formatBytes(value: number): string {
@@ -25,6 +26,7 @@ export function SettingsDialog({
   updateState,
   onClose,
   onRestartToUpdate,
+  onOpenInspector,
 }: Props) {
   const canRestart = updateState.phase === 'ready'
 
@@ -53,6 +55,10 @@ export function SettingsDialog({
               <div className="settings-label">Version</div>
               <div className="settings-value">{appInfo.version}</div>
             </div>
+            <button className="restart-update-button" onClick={onOpenInspector}>
+              <Bug size={14} />
+              <span>Open Inspector</span>
+            </button>
           </div>
           <div className="settings-row">
             <div>

@@ -15,6 +15,7 @@ describe('SettingsDialog', () => {
         }}
         onClose={vi.fn()}
         onRestartToUpdate={vi.fn()}
+        onOpenInspector={vi.fn()}
       />,
     )
 

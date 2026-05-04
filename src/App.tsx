@@ -23,7 +23,7 @@ import {
   renameProjectView,
   writeViewGraph,
 } from './tauri/fs'
-import { loadLastProject, saveLastProject } from './tauri/persistence'
+import { loadLastProject, loadWindowSize, saveLastProject, saveWindowSize } from './tauri/persistence'
 import { seedSampleProjectIfMissing } from './seed/seedSampleProject'
 import { emptyGraph, isValidA2UIGraph, type A2UIGraph } from './a2ui/schema'
 import { Sidebar } from './components/Sidebar'
@@ -53,6 +53,7 @@ import {
   type TerminalSession,
 } from './terminal/sessionModel'
 import { listTerminalProfiles } from './tauri/term'
+import { openInspector, reloadApp } from './tauri/inspector'
 import {
   checkAndDownloadUpdate,
   initialUpdateState,
@@ -66,7 +67,6 @@ import type { Update } from '@tauri-apps/plugin-updater'
 const SIDEBAR_WIDTH_KEY = 'delineation.sidebarWidth.obsidianLayout'
 const TERMINAL_HEIGHT_KEY = 'delineation.terminalHeight'
 const TERMINAL_SESSION_WIDTH_KEY = 'delineation.terminalSessionWidth'
-const WINDOW_SIZE_KEY = 'delineation.windowSize'
 const DEFAULT_TERMINAL_PROFILE: TerminalProfile = { id: 'shell', label: 'zsh' }
 
 function clamp(value: number, min: number, max: number): number {
@@ -84,35 +84,6 @@ function writeStoredNumber(key: string, value: number) {
   window.localStorage.setItem(key, String(Math.round(value)))
 }
 
-interface StoredWindowSize {
-  width: number
-  height: number
-}
-
-function readStoredWindowSize(): StoredWindowSize | null {
-  try {
-    const raw = window.localStorage.getItem(WINDOW_SIZE_KEY)
-    if (!raw) return null
-    const parsed = JSON.parse(raw) as Partial<StoredWindowSize>
-    const width = Number(parsed.width)
-    const height = Number(parsed.height)
-    if (!Number.isFinite(width) || !Number.isFinite(height)) return null
-    if (width < 760 || height < 500) return null
-    return { width, height }
-  } catch {
-    return null
-  }
-}
-
-function writeStoredWindowSize(width: number, height: number) {
-  if (!Number.isFinite(width) || !Number.isFinite(height)) return
-  if (width < 760 || height < 500) return
-  window.localStorage.setItem(WINDOW_SIZE_KEY, JSON.stringify({
-    width: Math.round(width),
-    height: Math.round(height),
-  }))
-}
-
 async function storeCurrentTauriWindowSize() {
   const { getCurrentWindow } = await import('@tauri-apps/api/window')
   const appWindow = getCurrentWindow()
@@ -121,7 +92,7 @@ async function storeCurrentTauriWindowSize() {
     appWindow.scaleFactor(),
   ])
   const logical = size.toLogical(scaleFactor)
-  writeStoredWindowSize(logical.width, logical.height)
+  await saveWindowSize(logical.width, logical.height)
 }
 
 function joinRelativePath(folder: string, name: string): string {
@@ -225,6 +196,7 @@ export default function App() {
   const [appInfo, setAppInfo] = useState<AppInfo>({ name: 'Delineation', version: '0.1.0' })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState>(initialUpdateState)
+  const [appContextMenu, setAppContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [projectName, setProjectName] = useState<string | null>(null)
   const [projectGuide, setProjectGuide] = useState<ProjectGuideState | null>(null)
   const [viewPanes, setViewPanes] = useState<ViewPane[]>(() => [createEmptyPane('pane-1')])
@@ -281,34 +253,28 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const storedSize = readStoredWindowSize()
+    let cancelled = false
     let unlistenTauriResize: (() => void) | null = null
     let tauriResizeTimer: number | null = null
 
-    if (storedSize) {
-      ;(async () => {
-        try {
-          const [{ getCurrentWindow }, { LogicalSize }] = await Promise.all([
-            import('@tauri-apps/api/window'),
-            import('@tauri-apps/api/dpi'),
-          ])
-          await getCurrentWindow().setSize(new LogicalSize(storedSize.width, storedSize.height))
-        } catch {
-          // Browser preview has no native window to resize.
-        }
-      })()
-    }
-
     ;(async () => {
       try {
-        const { getCurrentWindow } = await import('@tauri-apps/api/window')
+        const [storedSize, { getCurrentWindow }, { LogicalSize }] = await Promise.all([
+          loadWindowSize(),
+          import('@tauri-apps/api/window'),
+          import('@tauri-apps/api/dpi'),
+        ])
+        if (cancelled) return
         const appWindow = getCurrentWindow()
+        if (storedSize) {
+          await getCurrentWindow().setSize(new LogicalSize(storedSize.width, storedSize.height))
+        }
         unlistenTauriResize = await appWindow.onResized(() => {
           if (tauriResizeTimer !== null) window.clearTimeout(tauriResizeTimer)
           tauriResizeTimer = window.setTimeout(() => {
             tauriResizeTimer = null
             storeCurrentTauriWindowSize().catch(() => {
-              writeStoredWindowSize(window.innerWidth, window.innerHeight)
+              saveWindowSize(window.innerWidth, window.innerHeight).catch(() => {})
             })
           }, 180)
         })
@@ -322,16 +288,38 @@ export default function App() {
       if (resizeTimer !== null) window.clearTimeout(resizeTimer)
       resizeTimer = window.setTimeout(() => {
         resizeTimer = null
-        writeStoredWindowSize(window.innerWidth, window.innerHeight)
+        saveWindowSize(window.innerWidth, window.innerHeight).catch(() => {})
       }, 180)
     }
 
     window.addEventListener('resize', handleResize)
     return () => {
+      cancelled = true
       if (resizeTimer !== null) window.clearTimeout(resizeTimer)
       if (tauriResizeTimer !== null) window.clearTimeout(tauriResizeTimer)
       unlistenTauriResize?.()
       window.removeEventListener('resize', handleResize)
+    }
+  }, [])
+
+  useEffect(() => {
+    function handleContextMenu(event: MouseEvent) {
+      if (event.defaultPrevented) return
+      event.preventDefault()
+      setAppContextMenu({ x: event.clientX, y: event.clientY })
+    }
+
+    function closeContextMenu() {
+      setAppContextMenu(null)
+    }
+
+    document.addEventListener('contextmenu', handleContextMenu)
+    window.addEventListener('click', closeContextMenu)
+    window.addEventListener('keydown', closeContextMenu)
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu)
+      window.removeEventListener('click', closeContextMenu)
+      window.removeEventListener('keydown', closeContextMenu)
     }
   }, [])
 
@@ -784,6 +772,36 @@ export default function App() {
     }
   }
 
+  async function handleOpenInspector() {
+    setAppContextMenu(null)
+    try {
+      await openInspector()
+    } catch (err) {
+      window.alert(`Failed to open Inspector: ${String(err)}`)
+    }
+  }
+
+  function renderAppContextMenu() {
+    if (!appContextMenu) return null
+    return (
+      <div
+        className="context-menu app-context-menu"
+        style={{ left: appContextMenu.x, top: appContextMenu.y }}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <button
+          onClick={() => {
+            setAppContextMenu(null)
+            reloadApp()
+          }}
+        >
+          Reload
+        </button>
+        <button onClick={handleOpenInspector}>Inspect</button>
+      </div>
+    )
+  }
+
   function beginSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
     event.preventDefault()
     const startX = event.clientX
@@ -866,6 +884,7 @@ export default function App() {
             updateState={updateState}
             onClose={() => setSettingsOpen(false)}
             onRestartToUpdate={handleRestartToUpdate}
+            onOpenInspector={handleOpenInspector}
           />
         )}
         {projectGuide && (
@@ -885,6 +904,7 @@ export default function App() {
           onOpenSample={handleOpenSample}
           onOpenSettings={() => setSettingsOpen(true)}
         />
+        {renderAppContextMenu()}
       </>
     )
   }
@@ -897,6 +917,7 @@ export default function App() {
           updateState={updateState}
           onClose={() => setSettingsOpen(false)}
           onRestartToUpdate={handleRestartToUpdate}
+          onOpenInspector={handleOpenInspector}
         />
       )}
       {projectGuide && (
@@ -1084,6 +1105,7 @@ export default function App() {
           </section>
         </main>
       </div>
+      {renderAppContextMenu()}
     </div>
   )
 }

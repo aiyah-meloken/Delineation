@@ -10,6 +10,12 @@ const CONFIG_FILE = 'config.json'
 
 interface PersistedConfig {
   lastProject?: string | null
+  windowSize?: WindowSize | null
+}
+
+export interface WindowSize {
+  width: number
+  height: number
 }
 
 async function ensureAppDataDir(): Promise<void> {
@@ -19,20 +25,50 @@ async function ensureAppDataDir(): Promise<void> {
   }
 }
 
-export async function loadLastProject(): Promise<string | null> {
+async function loadConfig(): Promise<PersistedConfig> {
   try {
     const text = await readTextFile(CONFIG_FILE, { baseDir: BaseDirectory.AppData })
-    const cfg = JSON.parse(text) as PersistedConfig
-    return cfg.lastProject ?? null
+    return JSON.parse(text) as PersistedConfig
   } catch {
-    return null
+    return {}
   }
 }
 
-export async function saveLastProject(path: string | null): Promise<void> {
+async function saveConfig(config: PersistedConfig): Promise<void> {
   await ensureAppDataDir()
-  const cfg: PersistedConfig = { lastProject: path }
-  await writeTextFile(CONFIG_FILE, JSON.stringify(cfg, null, 2), {
+  await writeTextFile(CONFIG_FILE, JSON.stringify(config, null, 2), {
     baseDir: BaseDirectory.AppData,
+  })
+}
+
+export async function loadLastProject(): Promise<string | null> {
+  const cfg = await loadConfig()
+  return cfg.lastProject ?? null
+}
+
+export async function saveLastProject(path: string | null): Promise<void> {
+  const cfg = await loadConfig()
+  await saveConfig({ ...cfg, lastProject: path })
+}
+
+export async function loadWindowSize(): Promise<WindowSize | null> {
+  const cfg = await loadConfig()
+  const width = Number(cfg.windowSize?.width)
+  const height = Number(cfg.windowSize?.height)
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return null
+  if (width < 760 || height < 500) return null
+  return { width, height }
+}
+
+export async function saveWindowSize(width: number, height: number): Promise<void> {
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return
+  if (width < 760 || height < 500) return
+  const cfg = await loadConfig()
+  await saveConfig({
+    ...cfg,
+    windowSize: {
+      width: Math.round(width),
+      height: Math.round(height),
+    },
   })
 }
