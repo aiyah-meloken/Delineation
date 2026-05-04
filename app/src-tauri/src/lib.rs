@@ -2,8 +2,9 @@ mod a2ui;
 mod term;
 
 use crate::term::session::{
-    kill as term_kill_inner, resize as term_resize_inner, spawn as term_spawn_inner,
-    write as term_write_inner, TermState,
+    available_profiles as term_available_profiles_inner, kill as term_kill_inner,
+    resize as term_resize_inner, spawn as term_spawn_inner, write as term_write_inner,
+    TermState, TerminalProfile, TerminalProfileId,
 };
 use tauri::AppHandle;
 
@@ -11,12 +12,18 @@ use tauri::AppHandle;
 async fn term_spawn(
     app: AppHandle,
     project_path: String,
+    profile: TerminalProfileId,
     cols: u16,
     rows: u16,
 ) -> Result<String, String> {
-    term_spawn_inner(app, project_path, cols, rows)
+    term_spawn_inner(app, project_path, profile, cols, rows)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn term_available_profiles() -> Result<Vec<TerminalProfile>, String> {
+    Ok(term_available_profiles_inner())
 }
 
 #[tauri::command]
@@ -51,9 +58,12 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(TermState::new())
         .invoke_handler(tauri::generate_handler![
             term_spawn,
+            term_available_profiles,
             term_write,
             term_resize,
             term_kill

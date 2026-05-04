@@ -113,6 +113,29 @@ describe('closeTab', () => {
   })
 })
 
+describe('reorderTabs', () => {
+  beforeEach(() => {
+    useProjectStore.getState().reset()
+    useProjectStore.getState().openProject('/p', ['a.html', 'b.html', 'c.html'])
+    useProjectStore.getState().openView('a.html')
+    useProjectStore.getState().openView('b.html')
+    useProjectStore.getState().openView('c.html')
+  })
+
+  it('moves an open tab before the target tab while keeping active tab', () => {
+    useProjectStore.getState().reorderTabs('c.html', 'a.html')
+
+    const s = useProjectStore.getState()
+    expect(s.openTabs).toEqual(['c.html', 'a.html', 'b.html'])
+    expect(s.activeTab).toBe('c.html')
+  })
+
+  it('ignores unknown tabs', () => {
+    useProjectStore.getState().reorderTabs('missing.html', 'a.html')
+    expect(useProjectStore.getState().openTabs).toEqual(['a.html', 'b.html', 'c.html'])
+  })
+})
+
 describe('refreshViewList', () => {
   beforeEach(() => {
     useProjectStore.getState().reset()
@@ -126,5 +149,80 @@ describe('refreshViewList', () => {
     expect(s.viewList).toEqual(['a.html', 'z.html'])
     expect(s.openTabs).toEqual(['a.html'])
     expect(s.activeTab).toBe('a.html')
+  })
+})
+
+describe('renameView', () => {
+  beforeEach(() => {
+    useProjectStore.getState().reset()
+    useProjectStore.getState().openProject('/p', ['a.html', 'folder/b.html', 'c.html'])
+    useProjectStore.getState().openView('a.html')
+    useProjectStore.getState().openView('folder/b.html')
+  })
+
+  it('renames the view in list and open tabs', () => {
+    useProjectStore.getState().renameView('folder/b.html', 'folder/renamed.html')
+
+    const s = useProjectStore.getState()
+    expect(s.viewList).toEqual(['a.html', 'c.html', 'folder/renamed.html'])
+    expect(s.openTabs).toEqual(['a.html', 'folder/renamed.html'])
+    expect(s.activeTab).toBe('folder/renamed.html')
+  })
+
+  it('keeps active tab unchanged when renaming a non-active view', () => {
+    useProjectStore.getState().renameView('a.html', 'z.html')
+
+    const s = useProjectStore.getState()
+    expect(s.openTabs).toEqual(['z.html', 'folder/b.html'])
+    expect(s.activeTab).toBe('folder/b.html')
+  })
+})
+
+describe('renameFolder', () => {
+  beforeEach(() => {
+    useProjectStore.getState().reset()
+    useProjectStore.getState().openProject('/p', [
+      'flows/a.html',
+      'flows/nested/b.a2ui.json',
+      'notes.html',
+    ])
+    useProjectStore.getState().openView('flows/a.html')
+    useProjectStore.getState().openView('flows/nested/b.a2ui.json')
+  })
+
+  it('renames matching view paths in list and open tabs', () => {
+    useProjectStore.getState().renameFolder('flows', 'archive')
+
+    const s = useProjectStore.getState()
+    expect(s.viewList).toEqual([
+      'archive/a.html',
+      'archive/nested/b.a2ui.json',
+      'notes.html',
+    ])
+    expect(s.openTabs).toEqual(['archive/a.html', 'archive/nested/b.a2ui.json'])
+    expect(s.activeTab).toBe('archive/nested/b.a2ui.json')
+  })
+})
+
+describe('deleteFolder', () => {
+  beforeEach(() => {
+    useProjectStore.getState().reset()
+    useProjectStore.getState().openProject('/p', [
+      'flows/a.html',
+      'flows/nested/b.a2ui.json',
+      'notes.html',
+    ])
+    useProjectStore.getState().openView('notes.html')
+    useProjectStore.getState().openView('flows/a.html')
+    useProjectStore.getState().openView('flows/nested/b.a2ui.json')
+  })
+
+  it('removes views under the folder and closes matching tabs', () => {
+    useProjectStore.getState().deleteFolder('flows')
+
+    const s = useProjectStore.getState()
+    expect(s.viewList).toEqual(['notes.html'])
+    expect(s.openTabs).toEqual(['notes.html'])
+    expect(s.activeTab).toBe('notes.html')
   })
 })

@@ -24,6 +24,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -32,5 +33,13 @@
       "icons/icon.ico"
     ],
     "resources": ["resources/sample-project/*"]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk4QjE0RDhCRDQxMzlBOTkKUldTWm1oUFVpMDJ4bUV4TmdzWVh6MFRhUWl4OUxueFRpZ2l6bXFkZEwyNE9tUjZhRURieWxCb1AK",
+      "endpoints": [
+        "https://github.com/aiyah-meloken/Delineation/releases/latest/download/latest.json"
+      ]
+    }
   }
 }

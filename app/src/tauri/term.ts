@@ -1,13 +1,19 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { A2UIGraph } from '../a2ui/schema'
+import type { TerminalProfile, TerminalProfileId } from '../terminal/sessionModel'
 
 export async function spawnTerminal(
   projectPath: string,
+  profile: TerminalProfileId,
   cols: number,
   rows: number,
 ): Promise<string> {
-  return invoke('term_spawn', { projectPath, cols, rows })
+  return invoke('term_spawn', { projectPath, profile, cols, rows })
+}
+
+export async function listTerminalProfiles(): Promise<TerminalProfile[]> {
+  return invoke('term_available_profiles')
 }
 
 export async function writeTerminal(sessionId: string, base64Data: string): Promise<void> {

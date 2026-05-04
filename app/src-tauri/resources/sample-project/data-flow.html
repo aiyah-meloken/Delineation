@@ -2,11 +2,16 @@
 <html lang="en">
 <head><meta charset="utf-8"><title>Data Flow</title>
 <style>
-body{font-family:system-ui,sans-serif;padding:32px;color:#222;line-height:1.5;max-width:760px}
-.node{display:inline-block;border:1.5px solid #444;border-radius:6px;padding:8px 14px;margin:4px;background:#fff}
-.arrow{display:inline-block;margin:0 4px;color:#666}
+:root{color-scheme:dark}
+body{margin:0;background:#1a1b26;color:#cfd6ee;font-family:ui-sans-serif,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.62}
+main{max-width:760px;padding:56px 40px 80px}
+h1{margin:0 0 20px;color:#ff7588;font-size:34px;line-height:1.1}
+p{margin:0 0 18px;color:#cfd6ee;font-size:16px}
+.node{display:inline-block;border:1.5px solid #4b526b;border-radius:8px;padding:8px 14px;margin:4px;background:#222433;color:#e2e7ff;font-weight:650}
+.arrow{display:inline-block;margin:0 4px;color:#8d91ff}
 </style></head>
 <body>
+<main>
 <h1>Data Flow</h1>
 <p>Ingest pipeline, left to right:</p>
 <p>
@@ -16,4 +21,5 @@ body{font-family:system-ui,sans-serif;padding:32px;color:#222;line-height:1.5;ma
   <span class="node">Store</span>
 </p>
 <p>Failure mode: validation rejects route to a dead-letter topic; enrichment is idempotent so retries are safe.</p>
+</main>
 </body></html>

@@ -1,0 +1,81 @@
+name: Release macOS
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.1.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Build signed macOS app
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Install frontend dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Apply updater public key from repository secret
+        working-directory: app
+        env:
+          TAURI_UPDATER_PUBLIC_KEY: ${{ secrets.TAURI_UPDATER_PUBLIC_KEY }}
+        run: |
+          if [ -z "$TAURI_UPDATER_PUBLIC_KEY" ]; then
+            echo "TAURI_UPDATER_PUBLIC_KEY is empty; using the public key committed in tauri.conf.json."
+            exit 0
+          fi
+          node - <<'NODE'
+          const fs = require('fs')
+          const path = 'src-tauri/tauri.conf.json'
+          const config = JSON.parse(fs.readFileSync(path, 'utf8'))
+          config.plugins ??= {}
+          config.plugins.updater ??= {}
+          config.plugins.updater.pubkey = process.env.TAURI_UPDATER_PUBLIC_KEY
+          fs.writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`)
+          NODE
+
+      - name: Build, sign, notarize, and publish release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: app
+          tagName: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          releaseName: Delineation ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          releaseDraft: true
+          prerelease: false
+          args: --target universal-apple-darwin
+          includeUpdaterJson: true
+          updaterJsonKeepUniversal: true

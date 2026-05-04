@@ -1,41 +1,339 @@
-import { useEffect, useState } from 'react'
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 import { useProjectStore } from './store/projectStore'
 import { useCanvasStore } from './store/canvasStore'
 import {
   pickFolder,
+  createProjectFolder,
+  deleteProjectFolder,
+  deleteProjectView,
+  listProjectFolders,
   listProjectViews,
+  initializeProjectDirectory,
+  isProjectDirectory,
+  readProjectMetadata,
   readViewFile,
   pathBasename,
+  renameProjectFolder,
+  renameProjectView,
   writeViewGraph,
 } from './tauri/fs'
 import { loadLastProject, saveLastProject } from './tauri/persistence'
 import { seedSampleProjectIfMissing } from './seed/seedSampleProject'
 import { emptyGraph, isValidA2UIGraph, type A2UIGraph } from './a2ui/schema'
-import { TopBar } from './components/TopBar'
 import { Sidebar } from './components/Sidebar'
 import { TabStrip } from './components/TabStrip'
 import { ViewerPane } from './components/ViewerPane'
 import { TerminalPanel } from './components/TerminalPanel'
 import { EmptyState } from './components/EmptyState'
+import { ProjectGuideDialog, type ProjectGuideState } from './components/ProjectGuideDialog'
+import { SettingsDialog } from './components/SettingsDialog'
+import { folderForNewChild, moveViewPath } from './project/viewTree'
+import {
+  activatePaneTab,
+  closePaneTab,
+  createEmptyPane,
+  deletePaneFolder,
+  openPaneTab,
+  renamePaneFolder,
+  renamePaneTab,
+  reorderPaneTab,
+  type ViewPane,
+} from './project/viewPanes'
+import {
+  closeTerminalSession,
+  createTerminalSession,
+  renameTerminalSession,
+  type TerminalProfile,
+  type TerminalSession,
+} from './terminal/sessionModel'
+import { listTerminalProfiles } from './tauri/term'
+import {
+  checkAndDownloadUpdate,
+  initialUpdateState,
+  installUpdateAndRelaunch,
+  readAppInfo,
+  type AppInfo,
+  type UpdateState,
+} from './tauri/update'
+import type { Update } from '@tauri-apps/plugin-updater'
 
-const DEFAULT_CANVAS_NAME = 'Untitled.a2ui.json'
+const SIDEBAR_WIDTH_KEY = 'delineation.sidebarWidth.obsidianLayout'
+const TERMINAL_HEIGHT_KEY = 'delineation.terminalHeight'
+const TERMINAL_SESSION_WIDTH_KEY = 'delineation.terminalSessionWidth'
+const WINDOW_SIZE_KEY = 'delineation.windowSize'
+const DEFAULT_TERMINAL_PROFILE: TerminalProfile = { id: 'shell', label: 'zsh' }
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
+}
+
+function readStoredNumber(key: string, fallback: number): number {
+  const raw = window.localStorage.getItem(key)
+  if (!raw) return fallback
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : fallback
+}
+
+function writeStoredNumber(key: string, value: number) {
+  window.localStorage.setItem(key, String(Math.round(value)))
+}
+
+interface StoredWindowSize {
+  width: number
+  height: number
+}
+
+function readStoredWindowSize(): StoredWindowSize | null {
+  try {
+    const raw = window.localStorage.getItem(WINDOW_SIZE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<StoredWindowSize>
+    const width = Number(parsed.width)
+    const height = Number(parsed.height)
+    if (!Number.isFinite(width) || !Number.isFinite(height)) return null
+    if (width < 760 || height < 500) return null
+    return { width, height }
+  } catch {
+    return null
+  }
+}
+
+function writeStoredWindowSize(width: number, height: number) {
+  if (!Number.isFinite(width) || !Number.isFinite(height)) return
+  if (width < 760 || height < 500) return
+  window.localStorage.setItem(WINDOW_SIZE_KEY, JSON.stringify({
+    width: Math.round(width),
+    height: Math.round(height),
+  }))
+}
+
+async function storeCurrentTauriWindowSize() {
+  const { getCurrentWindow } = await import('@tauri-apps/api/window')
+  const appWindow = getCurrentWindow()
+  const [size, scaleFactor] = await Promise.all([
+    appWindow.innerSize(),
+    appWindow.scaleFactor(),
+  ])
+  const logical = size.toLogical(scaleFactor)
+  writeStoredWindowSize(logical.width, logical.height)
+}
+
+function joinRelativePath(folder: string, name: string): string {
+  const cleanFolder = folder.replace(/^\/+|\/+$/g, '')
+  const cleanName = name.replace(/^\/+|\/+$/g, '')
+  return cleanFolder ? `${cleanFolder}/${cleanName}` : cleanName
+}
+
+function parentFolderPath(folderPath: string): string {
+  const clean = folderPath.replace(/^\/+|\/+$/g, '')
+  const slash = clean.lastIndexOf('/')
+  return slash === -1 ? '' : clean.slice(0, slash)
+}
+
+function normalizeNameInput(input: string | null): string | null {
+  const name = input?.trim()
+  if (!name) return null
+  return name.replace(/[\\/]/g, '-')
+}
+
+function ensureA2UIFilename(name: string): string {
+  if (name.toLowerCase().endsWith('.a2ui.json')) return name
+  if (name.toLowerCase().endsWith('.html')) return name.replace(/\.html$/i, '.a2ui.json')
+  return `${name}.a2ui.json`
+}
+
+function newTerminalSessionId(): string {
+  return `terminal-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function paneIdForTab(panes: ViewPane[], filename: string): string | null {
+  return panes.find((pane) => pane.tabs.includes(filename))?.id ?? null
+}
+
+function displayViewName(filename: string): string {
+  return filename.replace(/\.a2ui\.json$/i, '').replace(/\.html$/i, '')
+}
+
+function appTitle(projectName: string | null, activeTab: string | null): string {
+  if (projectName && activeTab) return `${displayViewName(activeTab)} - ${projectName} - Delineation`
+  if (projectName) return `${projectName} - Delineation`
+  return 'Delineation'
+}
+
+function ViewPaneContent({ projectPath, filename }: { projectPath: string; filename: string | null }) {
+  const graph = useCanvasStore((state) => filename ? state.graphs[filename] ?? null : null)
+  const setGraph = useCanvasStore((state) => state.setGraph)
+  const [html, setHtml] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      setHtml(null)
+      if (!filename) return
+      try {
+        const text = await readViewFile(projectPath, filename)
+        if (cancelled) return
+        if (filename.toLowerCase().endsWith('.html')) {
+          setHtml(text)
+        } else if (filename.toLowerCase().endsWith('.a2ui.json')) {
+          if (text.trim().length === 0) {
+            setGraph(filename, emptyGraph())
+            return
+          }
+          const parsed = JSON.parse(text)
+          const v = isValidA2UIGraph(parsed)
+          setGraph(filename, v.ok ? parsed as A2UIGraph : emptyGraph())
+        }
+      } catch (err) {
+        console.error('readViewFile failed:', err)
+        if (!cancelled && filename.toLowerCase().endsWith('.html')) {
+          setHtml(`<p style="font-family:sans-serif;padding:24px;color:#a00">Failed to read ${filename}: ${String(err)}</p>`)
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [projectPath, filename, setGraph])
+
+  return <ViewerPane filename={filename} html={html} graph={graph} />
+}
 
 export default function App() {
   const {
     currentProject,
     viewList,
-    openTabs,
     activeTab,
     openProject,
     openView,
     closeTab,
     refreshViewList,
+    renameView,
+    renameFolder,
+    deleteFolder,
   } = useProjectStore()
 
   const canvas = useCanvasStore()
 
+  const downloadedUpdateRef = useRef<Update | null>(null)
+  const [appInfo, setAppInfo] = useState<AppInfo>({ name: 'Delineation', version: '0.1.0' })
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  const [updateState, setUpdateState] = useState<UpdateState>(initialUpdateState)
   const [projectName, setProjectName] = useState<string | null>(null)
-  const [activeHtml, setActiveHtml] = useState<string | null>(null)
+  const [projectGuide, setProjectGuide] = useState<ProjectGuideState | null>(null)
+  const [viewPanes, setViewPanes] = useState<ViewPane[]>(() => [createEmptyPane('pane-1')])
+  const [activePaneId, setActivePaneId] = useState('pane-1')
+  const [folderList, setFolderList] = useState<string[]>([])
+  const [selectedFolder, setSelectedFolder] = useState('')
+  const [sidebarWidth, setSidebarWidth] = useState(() =>
+    clamp(readStoredNumber(SIDEBAR_WIDTH_KEY, 360), 280, 560),
+  )
+  const [terminalHeight, setTerminalHeight] = useState(() =>
+    clamp(readStoredNumber(TERMINAL_HEIGHT_KEY, 240), 150, 520),
+  )
+  const [terminalSessionWidth, setTerminalSessionWidth] = useState(() =>
+    clamp(readStoredNumber(TERMINAL_SESSION_WIDTH_KEY, 190), 140, 320),
+  )
+  const [terminalProfiles, setTerminalProfiles] = useState<TerminalProfile[]>([DEFAULT_TERMINAL_PROFILE])
+  const [terminalProfileMenuOpen, setTerminalProfileMenuOpen] = useState(false)
+  const [renamingTerminalSession, setRenamingTerminalSession] = useState<{
+    id: string
+    value: string
+  } | null>(null)
+  const [terminalSessions, setTerminalSessions] = useState<TerminalSession[]>(() => {
+    const session = createTerminalSession([], newTerminalSessionId(), DEFAULT_TERMINAL_PROFILE)
+    return [session]
+  })
+  const [activeTerminalSessionId, setActiveTerminalSessionId] = useState<string | null>(() =>
+    terminalSessions[0]?.id ?? null,
+  )
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const info = await readAppInfo()
+      if (!cancelled) setAppInfo(info)
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const update = await checkAndDownloadUpdate((state) => {
+        if (!cancelled) setUpdateState(state)
+      })
+      if (!cancelled) downloadedUpdateRef.current = update
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    const storedSize = readStoredWindowSize()
+    let unlistenTauriResize: (() => void) | null = null
+    let tauriResizeTimer: number | null = null
+
+    if (storedSize) {
+      ;(async () => {
+        try {
+          const [{ getCurrentWindow }, { LogicalSize }] = await Promise.all([
+            import('@tauri-apps/api/window'),
+            import('@tauri-apps/api/dpi'),
+          ])
+          await getCurrentWindow().setSize(new LogicalSize(storedSize.width, storedSize.height))
+        } catch {
+          // Browser preview has no native window to resize.
+        }
+      })()
+    }
+
+    ;(async () => {
+      try {
+        const { getCurrentWindow } = await import('@tauri-apps/api/window')
+        const appWindow = getCurrentWindow()
+        unlistenTauriResize = await appWindow.onResized(() => {
+          if (tauriResizeTimer !== null) window.clearTimeout(tauriResizeTimer)
+          tauriResizeTimer = window.setTimeout(() => {
+            tauriResizeTimer = null
+            storeCurrentTauriWindowSize().catch(() => {
+              writeStoredWindowSize(window.innerWidth, window.innerHeight)
+            })
+          }, 180)
+        })
+      } catch {
+        // Browser preview falls back to DOM resize events below.
+      }
+    })()
+
+    let resizeTimer: number | null = null
+    function handleResize() {
+      if (resizeTimer !== null) window.clearTimeout(resizeTimer)
+      resizeTimer = window.setTimeout(() => {
+        resizeTimer = null
+        writeStoredWindowSize(window.innerWidth, window.innerHeight)
+      }, 180)
+    }
+
+    window.addEventListener('resize', handleResize)
+    return () => {
+      if (resizeTimer !== null) window.clearTimeout(resizeTimer)
+      if (tauriResizeTimer !== null) window.clearTimeout(tauriResizeTimer)
+      unlistenTauriResize?.()
+      window.removeEventListener('resize', handleResize)
+    }
+  }, [])
 
   // Restore last project (with stale-clear, same as MVP1).
   useEffect(() => {
@@ -50,55 +348,144 @@ export default function App() {
 
   useEffect(() => {
     ;(async () => {
-      setProjectName(currentProject ? await pathBasename(currentProject) : null)
+      try {
+        const profiles = await listTerminalProfiles()
+        if (profiles.length > 0) setTerminalProfiles(profiles)
+      } catch (err) {
+        console.error('listTerminalProfiles failed:', err)
+      }
+    })()
+  }, [])
+
+  useEffect(() => {
+    ;(async () => {
+      if (!currentProject) {
+        setProjectName(null)
+        return
+      }
+      try {
+        setProjectName((await readProjectMetadata(currentProject)).name)
+      } catch {
+        setProjectName(await pathBasename(currentProject))
+      }
     })()
   }, [currentProject])
 
-  // Load active view content. .html → setActiveHtml, .a2ui.json → parse + canvasStore.
   useEffect(() => {
+    const title = appTitle(projectName, activeTab)
+    document.title = title
     ;(async () => {
-      setActiveHtml(null)
-      if (!currentProject || !activeTab) return
       try {
-        const text = await readViewFile(currentProject, activeTab)
-        if (activeTab.toLowerCase().endsWith('.html')) {
-          setActiveHtml(text)
-        } else if (activeTab.toLowerCase().endsWith('.a2ui.json')) {
-          // Empty file = treat as empty graph
-          if (text.trim().length === 0) {
-            canvas.setGraph(activeTab, emptyGraph())
-            return
-          }
-          const parsed = JSON.parse(text)
-          const v = isValidA2UIGraph(parsed)
-          if (v.ok) canvas.setGraph(activeTab, parsed as A2UIGraph)
-          else canvas.setGraph(activeTab, emptyGraph())
-        }
-      } catch (err) {
-        console.error('readViewFile failed:', err)
-        if (activeTab.toLowerCase().endsWith('.html')) {
-          setActiveHtml(`<p style="font-family:sans-serif;padding:24px;color:#a00">Failed to read ${activeTab}: ${String(err)}</p>`)
-        }
+        const { getCurrentWindow } = await import('@tauri-apps/api/window')
+        await getCurrentWindow().setTitle(title)
+      } catch {
+        // Browser preview has no native window to rename.
       }
     })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentProject, activeTab])
+  }, [projectName, activeTab])
 
-  async function tryOpenProjectAt(path: string): Promise<boolean> {
+  async function openInitializedProject(path: string): Promise<boolean> {
     try {
-      const files = await listProjectViews(path)
+      const [files, folders] = await Promise.all([
+        listProjectViews(path),
+        listProjectFolders(path),
+      ])
       openProject(path, files)
+      setViewPanes([createEmptyPane('pane-1')])
+      setActivePaneId('pane-1')
+      setFolderList(folders)
+      setSelectedFolder('')
       await saveLastProject(path)
       return true
     } catch (err) {
       console.error('Failed to open project:', err)
+      setProjectGuide((current) => current ? {
+        ...current,
+        error: `Failed to open Project: ${String(err)}`,
+      } : current)
       return false
     }
   }
 
+  async function tryOpenProjectAt(path: string): Promise<boolean> {
+    try {
+      if (await isProjectDirectory(path)) return openInitializedProject(path)
+      return false
+    } catch {
+      return false
+    }
+  }
+
+  async function showProjectGuide(path: string, mode: ProjectGuideState['mode']) {
+    setProjectGuide({
+      mode,
+      path,
+      name: await pathBasename(path),
+      error: null,
+    })
+  }
+
+  async function chooseProjectGuideFolder() {
+    const path = await pickFolder('Choose Project Folder')
+    if (!path) return
+    try {
+      const isProject = await isProjectDirectory(path)
+      setProjectGuide((current) => ({
+        mode: isProject ? 'already-project' : current?.mode === 'initialize' ? 'initialize' : 'create',
+        path,
+        name: current?.name?.trim() ? current.name : '',
+        error: null,
+      }))
+      if (!projectGuide?.name?.trim()) {
+        const basename = await pathBasename(path)
+        setProjectGuide((current) => current ? { ...current, name: basename } : current)
+      }
+    } catch (err) {
+      setProjectGuide((current) => current ? {
+        ...current,
+        path,
+        error: `Failed to inspect folder: ${String(err)}`,
+      } : current)
+    }
+  }
+
   async function handleOpenProject() {
-    const path = await pickFolder()
-    if (path) await tryOpenProjectAt(path)
+    const path = await pickFolder('Open Delineation Project')
+    if (!path) return
+    if (await tryOpenProjectAt(path)) return
+    await showProjectGuide(path, 'initialize')
+  }
+
+  async function handleNewProject() {
+    setProjectGuide({
+      mode: 'create',
+      path: null,
+      name: '',
+      error: null,
+    })
+  }
+
+  async function handleOpenGuidedProject() {
+    if (!projectGuide?.path) return
+    const opened = await openInitializedProject(projectGuide.path)
+    if (opened) setProjectGuide(null)
+  }
+
+  async function handleInitializeGuidedProject() {
+    if (!projectGuide?.path) return
+    const name = normalizeNameInput(projectGuide.name)
+    if (!name) {
+      setProjectGuide({ ...projectGuide, error: 'Project name is required.' })
+      return
+    }
+    try {
+      await initializeProjectDirectory(projectGuide.path, name)
+      const opened = await openInitializedProject(projectGuide.path)
+      if (opened) setProjectGuide(null)
+    } catch (err) {
+      console.error('handleInitializeGuidedProject failed:', err)
+      setProjectGuide({ ...projectGuide, error: `Failed to initialize Project: ${String(err)}` })
+    }
   }
 
   async function handleOpenSample() {
@@ -106,89 +493,595 @@ export default function App() {
     if (samplePath) await tryOpenProjectAt(samplePath)
   }
 
-  async function handleRefresh() {
+  async function handleNewCanvas(folderOverride: string | undefined, rawName: string) {
     if (!currentProject) return
-    try {
-      const files = await listProjectViews(currentProject)
-      refreshViewList(files)
-    } catch (err) {
-      console.error('refresh failed:', err)
-    }
-  }
+    const normalized = normalizeNameInput(rawName)
+    if (!normalized) return
 
-  async function handleNewCanvas() {
-    if (!currentProject) return
-    // Pick a name that doesn't collide.
-    let name = DEFAULT_CANVAS_NAME
+    const folder = folderOverride ?? selectedFolder
+    const baseName = ensureA2UIFilename(normalized)
+    let name = joinRelativePath(folder, baseName)
     let i = 1
     while (viewList.includes(name)) {
-      name = `Untitled-${i}.a2ui.json`
+      const stem = baseName.replace(/\.a2ui\.json$/i, '')
+      name = joinRelativePath(folder, `${stem}-${i}.a2ui.json`)
       i += 1
     }
     try {
       await writeViewGraph(currentProject, name, emptyGraph())
-      const files = await listProjectViews(currentProject)
+      const [files, folders] = await Promise.all([
+        listProjectViews(currentProject),
+        listProjectFolders(currentProject),
+      ])
       refreshViewList(files)
-      openView(name)
+      setFolderList(folders)
+      handleOpenView(name)
+      setSelectedFolder(folderForNewChild(name))
     } catch (err) {
       console.error('handleNewCanvas failed:', err)
     }
   }
 
-  function handleCloseTab(filename: string) {
+  async function handleNewFolder(folderOverride: string | undefined, rawName: string) {
+    if (!currentProject) return
+    const normalized = normalizeNameInput(rawName)
+    if (!normalized) return
+
+    const folderPath = joinRelativePath(folderOverride ?? selectedFolder, normalized)
+    try {
+      await createProjectFolder(currentProject, folderPath)
+      setSelectedFolder(folderPath)
+      const folders = await listProjectFolders(currentProject)
+      setFolderList(folders)
+    } catch (err) {
+      console.error('handleNewFolder failed:', err)
+    }
+  }
+
+  async function handleRenameFolder(folderPath: string, rawName: string) {
+    if (!currentProject) return
+    const normalized = normalizeNameInput(rawName)
+    if (!normalized) return
+
+    const parent = parentFolderPath(folderPath)
+    const nextPath = joinRelativePath(parent, normalized)
+    if (nextPath === folderPath) return
+    if (folderList.includes(nextPath)) {
+      window.alert(`A Folder named "${normalized}" already exists here.`)
+      return
+    }
+    if (nextPath.startsWith(`${folderPath}/`)) {
+      window.alert('A Folder cannot be moved into itself.')
+      return
+    }
+
+    try {
+      await renameProjectFolder(currentProject, folderPath, nextPath)
+      renameFolder(folderPath, nextPath)
+      setViewPanes((panes) => renamePaneFolder(panes, folderPath, nextPath))
+      canvas.renamePrefix(folderPath, nextPath)
+      const [files, folders] = await Promise.all([
+        listProjectViews(currentProject),
+        listProjectFolders(currentProject),
+      ])
+      refreshViewList(files)
+      setFolderList(folders)
+      setSelectedFolder(nextPath)
+    } catch (err) {
+      console.error('handleRenameFolder failed:', err)
+      window.alert(`Failed to rename Folder: ${String(err)}`)
+    }
+  }
+
+  async function handleDeleteFolder(folderPath: string) {
+    if (!currentProject) return
+    const ok = window.confirm(`Delete Folder "${folderPath}"?\n\nThis removes the folder and everything inside it from disk.`)
+    if (!ok) return
+
+    try {
+      await deleteProjectFolder(currentProject, folderPath)
+      deleteFolder(folderPath)
+      setViewPanes((panes) => deletePaneFolder(panes, folderPath))
+      canvas.discardPrefix(folderPath)
+      const [files, folders] = await Promise.all([
+        listProjectViews(currentProject),
+        listProjectFolders(currentProject),
+      ])
+      refreshViewList(files)
+      setFolderList(folders)
+      setSelectedFolder('')
+    } catch (err) {
+      console.error('handleDeleteFolder failed:', err)
+      window.alert(`Failed to delete Folder: ${String(err)}`)
+    }
+  }
+
+  function handleOpenView(filename: string) {
+    setSelectedFolder(folderForNewChild(filename))
+    const existingPaneId = paneIdForTab(viewPanes, filename)
+    const nextActivePaneId = existingPaneId ?? activePaneId
+    setActivePaneId(nextActivePaneId)
+    setViewPanes((panes) => openPaneTab(panes, nextActivePaneId, filename))
+    openView(filename)
+  }
+
+  async function handleDeleteView(filename: string) {
+    if (!currentProject) return
+    const ok = window.confirm(`Delete View "${displayViewName(filename)}"?\n\nThis removes the file from disk.`)
+    if (!ok) return
+
+    try {
+      await deleteProjectView(currentProject, filename)
+      const nextPanes = closePaneTab(viewPanes, filename)
+      setViewPanes(nextPanes)
+      const fallbackActivePane = nextPanes.find((pane) => pane.id === activePaneId) ?? nextPanes[0]
+      setActivePaneId(fallbackActivePane.id)
+      closeTab(filename)
+      if (fallbackActivePane.activeTab) openView(fallbackActivePane.activeTab)
+      canvas.discard(filename)
+      const [files, folders] = await Promise.all([
+        listProjectViews(currentProject),
+        listProjectFolders(currentProject),
+      ])
+      refreshViewList(files)
+      setFolderList(folders)
+      setSelectedFolder(folderForNewChild(filename))
+    } catch (err) {
+      console.error('handleDeleteView failed:', err)
+      window.alert(`Failed to delete View: ${String(err)}`)
+    }
+  }
+
+  async function handleRenameView(filename: string, rawName: string) {
+    if (!currentProject) return
+    const normalized = normalizeNameInput(rawName)
+    if (!normalized) return
+
+    const folder = folderForNewChild(filename)
+    const extension = filename.toLowerCase().endsWith('.html') ? '.html' : '.a2ui.json'
+    const baseName = normalized.toLowerCase().endsWith(extension) ? normalized : `${normalized}${extension}`
+    const nextName = joinRelativePath(folder, baseName)
+    if (nextName === filename) return
+    if (viewList.includes(nextName)) {
+      window.alert(`A View named "${baseName}" already exists in this folder.`)
+      return
+    }
+
+    try {
+      await renameProjectView(currentProject, filename, nextName)
+      renameView(filename, nextName)
+      setViewPanes((panes) => renamePaneTab(panes, filename, nextName))
+      canvas.rename(filename, nextName)
+      const [files, folders] = await Promise.all([
+        listProjectViews(currentProject),
+        listProjectFolders(currentProject),
+      ])
+      refreshViewList(files)
+      setFolderList(folders)
+      setSelectedFolder(folderForNewChild(nextName))
+    } catch (err) {
+      console.error('handleRenameView failed:', err)
+      window.alert(`Failed to rename View: ${String(err)}`)
+    }
+  }
+
+  async function handleMoveView(filename: string, targetFolder: string) {
+    if (!currentProject) return
+    const nextName = moveViewPath(filename, targetFolder)
+    if (nextName === filename) return
+    if (viewList.includes(nextName)) {
+      window.alert(`A View named "${displayViewName(nextName)}" already exists in this folder.`)
+      return
+    }
+
+    try {
+      await renameProjectView(currentProject, filename, nextName)
+      renameView(filename, nextName)
+      setViewPanes((panes) => renamePaneTab(panes, filename, nextName))
+      canvas.rename(filename, nextName)
+      const [files, folders] = await Promise.all([
+        listProjectViews(currentProject),
+        listProjectFolders(currentProject),
+      ])
+      refreshViewList(files)
+      setFolderList(folders)
+      setSelectedFolder(targetFolder)
+    } catch (err) {
+      console.error('handleMoveView failed:', err)
+      window.alert(`Failed to move View: ${String(err)}`)
+    }
+  }
+
+  function handleActivatePaneTab(paneId: string, filename: string) {
+    setActivePaneId(paneId)
+    setSelectedFolder(folderForNewChild(filename))
+    setViewPanes((panes) => activatePaneTab(panes, paneId, filename))
+    openView(filename)
+  }
+
+  function handleClosePaneTab(paneId: string, filename: string) {
+    const nextPanes = closePaneTab(viewPanes, filename, paneId)
+    setViewPanes(nextPanes)
+    const fallbackActivePane = nextPanes.find((pane) => pane.id === activePaneId) ?? nextPanes[0]
+    setActivePaneId(fallbackActivePane.id)
     closeTab(filename)
-    canvas.discard(filename)
-    // TerminalPanel unmounts on closeTab and calls killTerminal in its own cleanup.
+    if (fallbackActivePane.activeTab) openView(fallbackActivePane.activeTab)
+    if (!nextPanes.some((pane) => pane.tabs.includes(filename))) canvas.discard(filename)
+  }
+
+  function handleReorderPaneTab(paneId: string, draggedFilename: string, targetFilename: string) {
+    setActivePaneId(paneId)
+    setViewPanes((panes) => reorderPaneTab(panes, paneId, draggedFilename, targetFilename))
   }
 
   function handleGraphReady(graph: A2UIGraph) {
-    if (!activeTab || !currentProject) return
+    if (!activeTab || !currentProject || !activeTab.toLowerCase().endsWith('.a2ui.json')) return
     canvas.setGraph(activeTab, graph)
     writeViewGraph(currentProject, activeTab, graph).catch((err) =>
       console.error('writeViewGraph failed:', err),
     )
   }
 
+  function handleNewTerminal(profile: TerminalProfile) {
+    setTerminalSessions((sessions) => {
+      const next = createTerminalSession(sessions, newTerminalSessionId(), profile)
+      setActiveTerminalSessionId(next.id)
+      return [...sessions, next]
+    })
+    setTerminalProfileMenuOpen(false)
+  }
+
+  function handleCloseTerminal(sessionId: string) {
+    setTerminalSessions((sessions) => {
+      const next = closeTerminalSession(sessions, activeTerminalSessionId, sessionId)
+      if (next.sessions.length > 0) {
+        setActiveTerminalSessionId(next.activeSessionId)
+        return next.sessions
+      }
+      const replacement = createTerminalSession([], newTerminalSessionId(), terminalProfiles[0] ?? DEFAULT_TERMINAL_PROFILE)
+      setActiveTerminalSessionId(replacement.id)
+      return [replacement]
+    })
+  }
+
+  function startRenameTerminal(session: TerminalSession) {
+    setActiveTerminalSessionId(session.id)
+    setRenamingTerminalSession({ id: session.id, value: session.title })
+  }
+
+  function commitRenameTerminal(sessionId: string, value: string) {
+    setTerminalSessions((sessions) => renameTerminalSession(sessions, sessionId, value))
+    setRenamingTerminalSession(null)
+  }
+
+  function handleTerminalRenameKeyDown(
+    event: KeyboardEvent<HTMLInputElement>,
+    session: TerminalSession,
+  ) {
+    if (event.key === 'Enter') {
+      event.currentTarget.blur()
+    } else if (event.key === 'Escape') {
+      setRenamingTerminalSession(null)
+      event.currentTarget.value = session.title
+      event.currentTarget.blur()
+    }
+  }
+
+  async function handleRestartToUpdate() {
+    if (updateState.phase !== 'ready') return
+    setUpdateState((current) => ({
+      ...current,
+      phase: 'installing',
+      message: 'Installing update...',
+    }))
+    try {
+      await installUpdateAndRelaunch(downloadedUpdateRef.current)
+    } catch (err) {
+      setUpdateState({
+        phase: 'error',
+        message: `Install failed: ${String(err)}`,
+      })
+    }
+  }
+
+  function beginSidebarResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = sidebarWidth
+    document.body.classList.add('is-resizing', 'is-resizing-columns')
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const next = clamp(startWidth + moveEvent.clientX - startX, 280, 560)
+      setSidebarWidth(next)
+      writeStoredNumber(SIDEBAR_WIDTH_KEY, next)
+    }
+
+    const stop = () => {
+      document.body.classList.remove('is-resizing', 'is-resizing-columns')
+      window.removeEventListener('pointermove', handleMove)
+      window.removeEventListener('pointerup', stop)
+      window.removeEventListener('pointercancel', stop)
+    }
+
+    window.addEventListener('pointermove', handleMove)
+    window.addEventListener('pointerup', stop)
+    window.addEventListener('pointercancel', stop)
+  }
+
+  function beginTerminalResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault()
+    const startY = event.clientY
+    const startHeight = terminalHeight
+    document.body.classList.add('is-resizing', 'is-resizing-rows')
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const maxHeight = Math.max(180, window.innerHeight - 180)
+      const next = clamp(startHeight - (moveEvent.clientY - startY), 150, maxHeight)
+      setTerminalHeight(next)
+      writeStoredNumber(TERMINAL_HEIGHT_KEY, next)
+    }
+
+    const stop = () => {
+      document.body.classList.remove('is-resizing', 'is-resizing-rows')
+      window.removeEventListener('pointermove', handleMove)
+      window.removeEventListener('pointerup', stop)
+      window.removeEventListener('pointercancel', stop)
+    }
+
+    window.addEventListener('pointermove', handleMove)
+    window.addEventListener('pointerup', stop)
+    window.addEventListener('pointercancel', stop)
+  }
+
+  function beginTerminalSessionResize(event: ReactPointerEvent<HTMLDivElement>) {
+    event.preventDefault()
+    const startX = event.clientX
+    const startWidth = terminalSessionWidth
+    document.body.classList.add('is-resizing', 'is-resizing-columns')
+
+    const handleMove = (moveEvent: PointerEvent) => {
+      const next = clamp(startWidth - (moveEvent.clientX - startX), 140, 320)
+      setTerminalSessionWidth(next)
+      writeStoredNumber(TERMINAL_SESSION_WIDTH_KEY, next)
+    }
+
+    const stop = () => {
+      document.body.classList.remove('is-resizing', 'is-resizing-columns')
+      window.removeEventListener('pointermove', handleMove)
+      window.removeEventListener('pointerup', stop)
+      window.removeEventListener('pointercancel', stop)
+    }
+
+    window.addEventListener('pointermove', handleMove)
+    window.addEventListener('pointerup', stop)
+    window.addEventListener('pointercancel', stop)
+  }
+
   if (!currentProject) {
     return (
-      <EmptyState onOpenProject={handleOpenProject} onOpenSample={handleOpenSample} />
+      <>
+        {settingsOpen && (
+          <SettingsDialog
+            appInfo={appInfo}
+            updateState={updateState}
+            onClose={() => setSettingsOpen(false)}
+            onRestartToUpdate={handleRestartToUpdate}
+          />
+        )}
+        {projectGuide && (
+          <ProjectGuideDialog
+            state={projectGuide}
+            onNameChange={(name) => setProjectGuide({ ...projectGuide, name, error: null })}
+            onChooseFolder={chooseProjectGuideFolder}
+            onClose={() => setProjectGuide(null)}
+            onCreate={handleInitializeGuidedProject}
+            onInitialize={handleInitializeGuidedProject}
+            onOpenExisting={handleOpenGuidedProject}
+          />
+        )}
+        <EmptyState
+          onNewProject={handleNewProject}
+          onOpenProject={handleOpenProject}
+          onOpenSample={handleOpenSample}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+      </>
     )
   }
 
-  const isCanvas = activeTab?.toLowerCase().endsWith('.a2ui.json') ?? false
-
   return (
     <div className="app">
-      <TopBar projectName={projectName} onOpenProject={handleOpenProject} />
-      <div className="app-body">
-        <Sidebar
-          views={viewList}
-          activeView={activeTab}
-          onSelect={openView}
-          onRefresh={handleRefresh}
-          onNewCanvas={handleNewCanvas}
+      {settingsOpen && (
+        <SettingsDialog
+          appInfo={appInfo}
+          updateState={updateState}
+          onClose={() => setSettingsOpen(false)}
+          onRestartToUpdate={handleRestartToUpdate}
         />
-        <main className="viewer">
-          <TabStrip
-            tabs={openTabs}
-            activeTab={activeTab}
-            onActivate={openView}
-            onClose={handleCloseTab}
+      )}
+      {projectGuide && (
+        <ProjectGuideDialog
+          state={projectGuide}
+          onNameChange={(name) => setProjectGuide({ ...projectGuide, name, error: null })}
+          onChooseFolder={chooseProjectGuideFolder}
+          onClose={() => setProjectGuide(null)}
+          onCreate={handleInitializeGuidedProject}
+          onInitialize={handleInitializeGuidedProject}
+          onOpenExisting={handleOpenGuidedProject}
+        />
+      )}
+      <div
+        className="app-body"
+        style={{ gridTemplateColumns: `${sidebarWidth}px 5px minmax(0, 1fr)` }}
+      >
+        <Sidebar
+          projectName={projectName}
+          views={viewList}
+          folders={folderList}
+          activeView={activeTab}
+          selectedFolder={selectedFolder}
+          onSelect={handleOpenView}
+          onSelectFolder={setSelectedFolder}
+          onNewProject={handleNewProject}
+          onOpenProject={handleOpenProject}
+          onNewFolder={handleNewFolder}
+          onDeleteFolder={handleDeleteFolder}
+          onRenameFolder={handleRenameFolder}
+          onDeleteView={handleDeleteView}
+          onRenameView={handleRenameView}
+          onMoveView={handleMoveView}
+          onNewCanvas={handleNewCanvas}
+          onOpenSettings={() => setSettingsOpen(true)}
+          updateReady={updateState.phase === 'ready'}
+        />
+        <div
+          className="resize-handle vertical-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize sidebar"
+          onPointerDown={beginSidebarResize}
+        />
+        <main
+          className="viewer"
+          style={{ gridTemplateRows: `minmax(0, 1fr) 5px ${terminalHeight}px` }}
+        >
+          <section className="view-block">
+            <div
+              className="view-pane-grid"
+              style={{ gridTemplateColumns: `repeat(${viewPanes.length}, minmax(260px, 1fr))` }}
+            >
+              {viewPanes.map((pane) => (
+                <section
+                  key={pane.id}
+                  className={`view-pane-shell ${pane.id === activePaneId ? 'active' : ''}`}
+                  data-view-pane-id={pane.id}
+                  onPointerDown={() => {
+                    setActivePaneId(pane.id)
+                    if (pane.activeTab) openView(pane.activeTab)
+                  }}
+                >
+                  <TabStrip
+                    paneId={pane.id}
+                    tabs={pane.tabs}
+                    activeTab={pane.activeTab}
+                    onActivate={(filename) => handleActivatePaneTab(pane.id, filename)}
+                    onClose={(filename) => handleClosePaneTab(pane.id, filename)}
+                    onReorder={(draggedFilename, targetFilename) =>
+                      handleReorderPaneTab(pane.id, draggedFilename, targetFilename)}
+                  />
+                  <div className="viewer-body">
+                    <ViewPaneContent
+                      projectPath={currentProject}
+                      filename={pane.activeTab}
+                    />
+                  </div>
+                </section>
+              ))}
+            </div>
+          </section>
+          <div
+            className="resize-handle horizontal-resizer"
+            role="separator"
+            aria-orientation="horizontal"
+            aria-label="Resize terminal"
+            onPointerDown={beginTerminalResize}
           />
-          <div className="viewer-body">
-            <ViewerPane
-              filename={activeTab}
-              html={activeHtml}
-              graph={activeTab ? canvas.getGraph(activeTab) : null}
-            />
-            {isCanvas && activeTab && currentProject && (
-              <TerminalPanel
-                projectPath={currentProject}
-                paneKey={activeTab}
-                onGraphReady={handleGraphReady}
+          <section className="terminal-block">
+            <div className="panel-header">
+              <span>Terminal</span>
+              <div className="terminal-new-menu">
+                <button
+                  className="terminal-new-button"
+                  onClick={() => setTerminalProfileMenuOpen((open) => !open)}
+                  aria-label="New Terminal"
+                >
+                  +
+                </button>
+                {terminalProfileMenuOpen && (
+                  <div className="terminal-profile-menu">
+                    {terminalProfiles.map((profile) => (
+                      <button
+                        key={profile.id}
+                        onClick={() => handleNewTerminal(profile)}
+                      >
+                        {profile.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            <div
+              className="terminal-layout"
+              style={{ gridTemplateColumns: `minmax(0, 1fr) 5px ${terminalSessionWidth}px` }}
+            >
+              <div className="terminal-stack">
+                {terminalSessions.map((session) => (
+                  <div
+                    key={session.id}
+                    className={`terminal-session-pane ${session.id === activeTerminalSessionId ? 'active' : ''}`}
+                  >
+                    <TerminalPanel
+                      projectPath={currentProject}
+                      profile={session.profileId}
+                      paneKey={`${currentProject}:${session.id}`}
+                      onGraphReady={handleGraphReady}
+                    />
+                  </div>
+                ))}
+              </div>
+              <div
+                className="resize-handle terminal-session-resizer"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize terminal sessions"
+                onPointerDown={beginTerminalSessionResize}
               />
-            )}
-          </div>
+              <aside className="terminal-session-list" aria-label="Terminal sessions">
+                <div className="session-list-header">Sessions</div>
+                {terminalSessions.map((session) => (
+                  <div
+                    key={session.id}
+                    className={`terminal-session ${session.id === activeTerminalSessionId ? 'active' : ''}`}
+                    onClick={() => setActiveTerminalSessionId(session.id)}
+                  >
+                    <span className="session-dot" />
+                    {renamingTerminalSession?.id === session.id ? (
+                      <input
+                        className="terminal-session-title-input"
+                        defaultValue={renamingTerminalSession.value}
+                        autoFocus
+                        onClick={(event) => event.stopPropagation()}
+                        onFocus={(event) => event.currentTarget.select()}
+                        onKeyDown={(event) => handleTerminalRenameKeyDown(event, session)}
+                        onBlur={(event) => commitRenameTerminal(session.id, event.currentTarget.value)}
+                      />
+                    ) : (
+                      <span
+                        className="terminal-session-title"
+                        onClick={(event) => {
+                          event.stopPropagation()
+                          startRenameTerminal(session)
+                        }}
+                      >
+                        {session.title}
+                      </span>
+                    )}
+                    <button
+                      className="terminal-session-close"
+                      onClick={(event) => {
+                        event.stopPropagation()
+                        handleCloseTerminal(session.id)
+                      }}
+                      aria-label={`Close ${session.title}`}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ))}
+              </aside>
+            </div>
+          </section>
         </main>
       </div>
     </div>

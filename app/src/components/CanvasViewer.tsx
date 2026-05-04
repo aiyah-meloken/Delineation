@@ -21,7 +21,10 @@ export function CanvasViewer({ graph, parseError }: Props) {
   if (!graph || graph.nodes.length === 0) {
     return (
       <div className="canvas-empty">
-        <p>{parseError ?? 'Type a prompt below to analyze a workflow.'}</p>
+        <div className="empty-card">
+          <h2>Empty A2UI View</h2>
+          <p>{parseError ?? 'Use the Agent TUI below to generate or update this View.'}</p>
+        </div>
       </div>
     )
   }

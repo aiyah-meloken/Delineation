@@ -1,10 +1,12 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Mutex;
@@ -14,6 +16,20 @@ use crate::a2ui::parse_a2ui_block;
 use crate::term::prompts::SYSTEM_PROMPT;
 
 const TAIL_CAP: usize = 256 * 1024;
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TerminalProfileId {
+    Shell,
+    Claude,
+    Codex,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct TerminalProfile {
+    pub id: String,
+    pub label: String,
+}
 
 pub struct SessionHandle {
     /// Master side of the PTY — used for resizing.
@@ -42,9 +58,99 @@ fn strip_ansi(s: &str) -> String {
     osc.replace_all(&s, "").to_string()
 }
 
+fn find_executable(name: &str) -> Option<PathBuf> {
+    let paths = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&paths) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn default_shell() -> String {
+    if let Ok(shell) = std::env::var("SHELL") {
+        if !shell.trim().is_empty() {
+            return shell;
+        }
+    }
+
+    for shell in ["zsh", "bash", "fish", "sh"] {
+        if let Some(path) = find_executable(shell) {
+            return path.to_string_lossy().to_string();
+        }
+    }
+
+    "sh".to_string()
+}
+
+fn shell_label(shell_path: &str) -> String {
+    std::path::Path::new(shell_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or("shell")
+        .to_string()
+}
+
+pub fn available_profiles() -> Vec<TerminalProfile> {
+    let shell = default_shell();
+    let mut profiles = vec![TerminalProfile {
+        id: "shell".to_string(),
+        label: shell_label(&shell),
+    }];
+
+    if find_executable("claude").is_some() {
+        profiles.push(TerminalProfile {
+            id: "claude".to_string(),
+            label: "Claude Code".to_string(),
+        });
+    }
+
+    if find_executable("codex").is_some() {
+        profiles.push(TerminalProfile {
+            id: "codex".to_string(),
+            label: "Codex".to_string(),
+        });
+    }
+
+    profiles
+}
+
+fn apply_common_env(cmd: &mut CommandBuilder) {
+    if let Ok(path) = std::env::var("PATH") {
+        cmd.env("PATH", path);
+    }
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    cmd.env("CLICOLOR", "1");
+    cmd.env("FORCE_COLOR", "3");
+    cmd.env_remove("NO_COLOR");
+    cmd.env("TERM_PROGRAM", "Delineation");
+    cmd.env("LANG", std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into()));
+    if let Ok(home) = std::env::var("HOME") {
+        cmd.env("HOME", home);
+    }
+}
+
+fn command_for_profile(profile: TerminalProfileId) -> CommandBuilder {
+    match profile {
+        TerminalProfileId::Shell => CommandBuilder::new(default_shell()),
+        TerminalProfileId::Claude => {
+            let mut cmd = CommandBuilder::new("claude");
+            cmd.arg("--append-system-prompt");
+            cmd.arg(SYSTEM_PROMPT);
+            cmd
+        }
+        TerminalProfileId::Codex => CommandBuilder::new("codex"),
+    }
+}
+
 pub async fn spawn(
     app: AppHandle,
     project_path: String,
+    profile: TerminalProfileId,
     cols: u16,
     rows: u16,
 ) -> Result<String> {
@@ -64,25 +170,9 @@ pub async fn spawn(
         })
         .map_err(|e| anyhow!("openpty failed: {e}"))?;
 
-    let mut cmd = CommandBuilder::new("claude");
-    cmd.arg("--append-system-prompt");
-    cmd.arg(SYSTEM_PROMPT);
+    let mut cmd = command_for_profile(profile);
     cmd.cwd(&project_path);
-
-    // Ensure PATH is inherited so `claude` resolves from ~/.local/bin or wherever it's installed.
-    if let Ok(path) = std::env::var("PATH") {
-        cmd.env("PATH", path);
-    }
-    // Tell child its terminal is xterm-256color so TUI apps (claude's Ink UI)
-    // pick the right escape sequences and don't fall back to a degraded mode
-    // that triggers excessive redraws.
-    cmd.env("TERM", "xterm-256color");
-    cmd.env("COLORTERM", "truecolor");
-    cmd.env("LANG", std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into()));
-    // Pass HOME through (claude reads ~/.claude/* config).
-    if let Ok(home) = std::env::var("HOME") {
-        cmd.env("HOME", home);
-    }
+    apply_common_env(&mut cmd);
 
     let child = pair
         .slave

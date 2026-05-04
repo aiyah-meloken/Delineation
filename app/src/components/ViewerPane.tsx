@@ -1,5 +1,6 @@
 import type { A2UIGraph } from '../a2ui/schema'
 import { CanvasViewer } from './CanvasViewer'
+import { CircleDot, FileText, History, Link2 } from 'lucide-react'
 
 interface Props {
   /** Active filename (drives extension dispatch). null when no tab is active. */
@@ -16,7 +17,11 @@ export function ViewerPane({ filename, html, graph, parseError }: Props) {
   if (!filename) {
     return (
       <div className="viewer-empty">
-        <p>No view open. Pick one from the sidebar.</p>
+        <div className="empty-card">
+          <CircleDot size={22} />
+          <h2>No View Open</h2>
+          <p>Pick a View from the sidebar, or create a new A2UI View to start shaping the project map.</p>
+        </div>
       </div>
     )
   }
@@ -27,7 +32,7 @@ export function ViewerPane({ filename, html, graph, parseError }: Props) {
 
   if (filename.toLowerCase().endsWith('.html')) {
     if (html === null) {
-      return <div className="viewer-empty"><p>Loading…</p></div>
+      return <div className="viewer-empty"><div className="empty-card"><p>Loading...</p></div></div>
     }
     return (
       <iframe
@@ -42,7 +47,46 @@ export function ViewerPane({ filename, html, graph, parseError }: Props) {
 
   return (
     <div className="viewer-empty">
-      <p>Unsupported view type: {filename}</p>
+      <div className="empty-card">
+        <FileText size={22} />
+        <h2>Unsupported View</h2>
+        <p>{filename}</p>
+      </div>
     </div>
+  )
+}
+
+export function ViewInspector({ filename }: { filename: string | null }) {
+  return (
+    <aside className="view-inspector">
+      <section>
+        <div className="inspector-title">
+          <FileText size={15} />
+          <span>View</span>
+        </div>
+        <h3>{filename ? filename.replace(/\.a2ui\.json$/i, '').replace(/\.html$/i, '') : 'Nothing selected'}</h3>
+        <div className="status-row">
+          <span className="status-dot reviewed" />
+          <span>{filename ? 'Draft' : 'Idle'}</span>
+        </div>
+      </section>
+      <section>
+        <div className="inspector-title">
+          <Link2 size={15} />
+          <span>Facts</span>
+        </div>
+        <p className="muted">Facts will be listed inside each View as LensKit output matures.</p>
+      </section>
+      <section>
+        <div className="inspector-title">
+          <History size={15} />
+          <span>Versions</span>
+        </div>
+        <div className="version-row">
+          <span>v0</span>
+          <span>Current workspace state</span>
+        </div>
+      </section>
+    </aside>
   )
 }

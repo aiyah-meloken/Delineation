@@ -34,4 +34,29 @@ describe('canvasStore', () => {
     useCanvasStore.getState().discard(f)
     expect(useCanvasStore.getState().getGraph(f)).toBeNull()
   })
+
+  it('rename moves a cached graph to the new filename', () => {
+    useCanvasStore.getState().setGraph('old.a2ui.json', sample)
+    useCanvasStore.getState().rename('old.a2ui.json', 'new.a2ui.json')
+
+    expect(useCanvasStore.getState().getGraph('old.a2ui.json')).toBeNull()
+    expect(useCanvasStore.getState().getGraph('new.a2ui.json')).toEqual(sample)
+  })
+
+  it('renamePrefix moves cached graphs under a folder', () => {
+    useCanvasStore.getState().setGraph('flows/a.a2ui.json', sample)
+    useCanvasStore.getState().renamePrefix('flows', 'archive')
+
+    expect(useCanvasStore.getState().getGraph('flows/a.a2ui.json')).toBeNull()
+    expect(useCanvasStore.getState().getGraph('archive/a.a2ui.json')).toEqual(sample)
+  })
+
+  it('discardPrefix removes cached graphs under a folder', () => {
+    useCanvasStore.getState().setGraph('flows/a.a2ui.json', sample)
+    useCanvasStore.getState().setGraph('other.a2ui.json', sample)
+    useCanvasStore.getState().discardPrefix('flows')
+
+    expect(useCanvasStore.getState().getGraph('flows/a.a2ui.json')).toBeNull()
+    expect(useCanvasStore.getState().getGraph('other.a2ui.json')).toEqual(sample)
+  })
 })

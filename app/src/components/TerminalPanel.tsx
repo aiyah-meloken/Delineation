@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import type { A2UIGraph } from '../a2ui/schema'
+import type { TerminalProfileId } from '../terminal/sessionModel'
 import {
   spawnTerminal,
   writeTerminal,
@@ -16,12 +17,13 @@ import {
 
 interface Props {
   projectPath: string
+  profile: TerminalProfileId
   /** Stable identifier so each canvas tab gets its own terminal. */
   paneKey: string
   onGraphReady?: (graph: A2UIGraph) => void
 }
 
-export function TerminalPanel({ projectPath, paneKey, onGraphReady }: Props) {
+export function TerminalPanel({ projectPath, profile, paneKey, onGraphReady }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const sessionIdRef = useRef<string | null>(null)
 
@@ -35,7 +37,28 @@ export function TerminalPanel({ projectPath, paneKey, onGraphReady }: Props) {
       convertEol: false,
       allowProposedApi: true,
       scrollback: 5000,
-      theme: { background: '#1e1e1e' },
+      theme: {
+        background: '#090b0f',
+        foreground: '#d7dce2',
+        cursor: '#d7dce2',
+        selectionBackground: '#2f5f7a88',
+        black: '#0f1115',
+        red: '#f47067',
+        green: '#8fc56b',
+        yellow: '#dcdc7d',
+        blue: '#6aa6c8',
+        magenta: '#c586c0',
+        cyan: '#4ec9b0',
+        white: '#d7dce2',
+        brightBlack: '#737d8d',
+        brightRed: '#ff8f86',
+        brightGreen: '#b5e890',
+        brightYellow: '#fff29d',
+        brightBlue: '#8fd5ff',
+        brightMagenta: '#e5a5e0',
+        brightCyan: '#7ee6cf',
+        brightWhite: '#ffffff',
+      },
     })
     const fit = new FitAddon()
     term.loadAddon(fit)
@@ -71,7 +94,7 @@ export function TerminalPanel({ projectPath, paneKey, onGraphReady }: Props) {
           // TUI never has to redraw mid-stream because the size changed.
           const cols = term.cols && term.cols >= 2 ? term.cols : 80
           const rows = term.rows && term.rows >= 2 ? term.rows : 24
-          const sid = await spawnTerminal(projectPath, cols, rows)
+          const sid = await spawnTerminal(projectPath, profile, cols, rows)
           if (cancelled) {
             killTerminal(sid).catch(() => {})
             return
@@ -146,7 +169,7 @@ export function TerminalPanel({ projectPath, paneKey, onGraphReady }: Props) {
       term.dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneKey, projectPath])
+  }, [paneKey, profile, projectPath])
 
   return <div ref={hostRef} className="terminal-host" />
 }
