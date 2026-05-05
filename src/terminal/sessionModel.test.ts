@@ -3,6 +3,9 @@ import {
   closeTerminalSession,
   createTerminalSession,
   renameTerminalSession,
+  restoreTerminalSessions,
+  serializeTerminalSessions,
+  terminalWorkspaceStorageKey,
   type TerminalProfile,
   type TerminalSession,
 } from './sessionModel'
@@ -63,5 +66,29 @@ describe('closeTerminalSession', () => {
 
   it('falls back to left neighbor when closing rightmost active session', () => {
     expect(closeTerminalSession(sessions, 'c', 'c').activeSessionId).toBe('b')
+  })
+})
+
+describe('terminal workspace persistence', () => {
+  it('restores persisted sessions and active session', () => {
+    const sessions: TerminalSession[] = [
+      { id: 'terminal-a', profileId: 'codex', title: 'Codex' },
+      { id: 'terminal-b', profileId: 'shell', title: 'zsh' },
+    ]
+    const raw = serializeTerminalSessions(sessions, 'terminal-b')
+
+    expect(restoreTerminalSessions(raw, shell)).toEqual({
+      sessions,
+      activeSessionId: 'terminal-b',
+    })
+  })
+
+  it('creates a fallback session when persisted data is missing or invalid', () => {
+    expect(restoreTerminalSessions(null, shell).sessions[0].profileId).toBe('shell')
+    expect(restoreTerminalSessions('not-json', shell).sessions[0].title).toBe('zsh')
+  })
+
+  it('scopes persisted sessions by project path', () => {
+    expect(terminalWorkspaceStorageKey('/tmp/A')).not.toBe(terminalWorkspaceStorageKey('/tmp/B'))
   })
 })

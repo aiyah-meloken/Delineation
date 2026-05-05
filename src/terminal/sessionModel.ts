@@ -11,6 +11,10 @@ export interface TerminalSession {
   title: string
 }
 
+export function newTerminalSessionId(): string {
+  return `terminal-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
 export function createTerminalSession(
   _existing: TerminalSession[],
   id: string,
@@ -21,6 +25,51 @@ export function createTerminalSession(
     profileId: profile.id,
     title: profile.label,
   }
+}
+
+export function terminalWorkspaceStorageKey(projectPath: string): string {
+  return `delineation.terminalSessions.${encodeURIComponent(projectPath)}`
+}
+
+export function restoreTerminalSessions(
+  raw: string | null,
+  fallbackProfile: TerminalProfile,
+): { sessions: TerminalSession[]; activeSessionId: string | null } {
+  if (!raw) {
+    const session = createTerminalSession([], newTerminalSessionId(), fallbackProfile)
+    return { sessions: [session], activeSessionId: session.id }
+  }
+  try {
+    const parsed = JSON.parse(raw) as {
+      sessions?: TerminalSession[]
+      activeSessionId?: string | null
+    }
+    const sessions = Array.isArray(parsed.sessions)
+      ? parsed.sessions.filter((session) =>
+          typeof session.id === 'string' &&
+          ['shell', 'claude', 'codex'].includes(session.profileId) &&
+          typeof session.title === 'string',
+        )
+      : []
+    if (sessions.length === 0) {
+      const session = createTerminalSession([], newTerminalSessionId(), fallbackProfile)
+      return { sessions: [session], activeSessionId: session.id }
+    }
+    const activeSessionId = sessions.some((session) => session.id === parsed.activeSessionId)
+      ? parsed.activeSessionId ?? sessions[0].id
+      : sessions[0].id
+    return { sessions, activeSessionId }
+  } catch {
+    const session = createTerminalSession([], newTerminalSessionId(), fallbackProfile)
+    return { sessions: [session], activeSessionId: session.id }
+  }
+}
+
+export function serializeTerminalSessions(
+  sessions: TerminalSession[],
+  activeSessionId: string | null,
+): string {
+  return JSON.stringify({ sessions, activeSessionId })
 }
 
 export function renameTerminalSession(

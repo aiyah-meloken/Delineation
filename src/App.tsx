@@ -54,11 +54,15 @@ import {
 import {
   closeTerminalSession,
   createTerminalSession,
+  newTerminalSessionId,
   renameTerminalSession,
+  restoreTerminalSessions,
+  serializeTerminalSessions,
+  terminalWorkspaceStorageKey,
   type TerminalProfile,
   type TerminalSession,
 } from './terminal/sessionModel'
-import { listTerminalProfiles } from './tauri/term'
+import { killTerminal, listTerminalProfiles } from './tauri/term'
 import {
   getViewVersion,
   listLensKits,
@@ -134,10 +138,6 @@ function ensureA2UIFilename(name: string): string {
   if (name.toLowerCase().endsWith('.a2ui.json')) return name
   if (name.toLowerCase().endsWith('.html')) return name.replace(/\.html$/i, '.a2ui.json')
   return `${name}.a2ui.json`
-}
-
-function newTerminalSessionId(): string {
-  return `terminal-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
 function paneIdForTab(panes: ViewPane[], filename: string): string | null {
@@ -273,7 +273,7 @@ export default function App() {
   const canvas = useCanvasStore()
 
   const downloadedUpdateRef = useRef<Update | null>(null)
-  const [appInfo, setAppInfo] = useState<AppInfo>({ name: 'Delineation', version: '0.1.6' })
+  const [appInfo, setAppInfo] = useState<AppInfo>({ name: 'Delineation', version: '0.1.7' })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState>(initialUpdateState)
   const [lensKits, setLensKits] = useState<LensKitInfo[]>([])
@@ -465,6 +465,12 @@ export default function App() {
       setFolderList(folders)
       setLensKits(kits)
       setSelectedFolder('')
+      const restoredTerminal = restoreTerminalSessions(
+        window.localStorage.getItem(terminalWorkspaceStorageKey(path)),
+        terminalProfiles[0] ?? DEFAULT_TERMINAL_PROFILE,
+      )
+      setTerminalSessions(restoredTerminal.sessions)
+      setActiveTerminalSessionId(restoredTerminal.activeSessionId)
       await saveLastProject(path)
       return true
     } catch (err) {
@@ -480,6 +486,14 @@ export default function App() {
   useEffect(() => {
     setControlContext(currentProject, activeTab).catch(() => {})
   }, [currentProject, activeTab])
+
+  useEffect(() => {
+    if (!currentProject) return
+    window.localStorage.setItem(
+      terminalWorkspaceStorageKey(currentProject),
+      serializeTerminalSessions(terminalSessions, activeTerminalSessionId),
+    )
+  }, [currentProject, terminalSessions, activeTerminalSessionId])
 
   useEffect(() => {
     if (!currentProject) return
@@ -842,6 +856,11 @@ export default function App() {
   }
 
   function handleCloseTerminal(sessionId: string) {
+    if (currentProject) {
+      killTerminal(currentProject, sessionId).catch((err) => {
+        console.error('term_kill failed:', err)
+      })
+    }
     setTerminalSessions((sessions) => {
       const next = closeTerminalSession(sessions, activeTerminalSessionId, sessionId)
       if (next.sessions.length > 0) {
@@ -1171,7 +1190,7 @@ export default function App() {
                       projectPath={currentProject}
                       profile={session.profileId}
                       activeView={activeTab}
-                      paneKey={`${currentProject}:${session.id}`}
+                      sessionId={session.id}
                       onGraphReady={handleGraphReady}
                     />
                   </div>

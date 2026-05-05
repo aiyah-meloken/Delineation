@@ -9,7 +9,7 @@ import {
   spawnTerminal,
   writeTerminal,
   resizeTerminal,
-  killTerminal,
+  detachTerminal,
   onTermData,
   onTermExit,
   onGraph,
@@ -18,13 +18,12 @@ import {
 interface Props {
   projectPath: string
   profile: TerminalProfileId
-  /** Stable identifier so each canvas tab gets its own terminal. */
-  paneKey: string
+  sessionId: string
   activeView: string | null
   onGraphReady?: (graph: A2UIGraph) => void
 }
 
-export function TerminalPanel({ projectPath, profile, paneKey, activeView, onGraphReady }: Props) {
+export function TerminalPanel({ projectPath, profile, sessionId, activeView, onGraphReady }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const sessionIdRef = useRef<string | null>(null)
 
@@ -79,7 +78,7 @@ export function TerminalPanel({ projectPath, profile, paneKey, activeView, onGra
       if (term.cols < 2 || term.rows < 2) return
       lastSentCols = term.cols
       lastSentRows = term.rows
-      resizeTerminal(sid, term.cols, term.rows).catch(() => {})
+      resizeTerminal(projectPath, sid, term.cols, term.rows).catch(() => {})
     }
 
     const initialize = () => {
@@ -95,9 +94,9 @@ export function TerminalPanel({ projectPath, profile, paneKey, activeView, onGra
           // TUI never has to redraw mid-stream because the size changed.
           const cols = term.cols && term.cols >= 2 ? term.cols : 80
           const rows = term.rows && term.rows >= 2 ? term.rows : 24
-          const sid = await spawnTerminal(projectPath, profile, activeView, cols, rows)
+          const sid = await spawnTerminal(sessionId, projectPath, profile, activeView, cols, rows)
           if (cancelled) {
-            killTerminal(sid).catch(() => {})
+            detachTerminal(sid).catch(() => {})
             return
           }
           sessionIdRef.current = sid
@@ -129,7 +128,7 @@ export function TerminalPanel({ projectPath, profile, paneKey, activeView, onGra
           // Forward user keystrokes.
           const sub = term.onData((data) => {
             const b = btoa(data)
-            writeTerminal(sid, b).catch((err) => console.error('term_write failed:', err))
+            writeTerminal(projectPath, sid, b).catch((err) => console.error('term_write failed:', err))
           })
           unsubs.push(() => sub.dispose())
           term.focus()
@@ -166,11 +165,11 @@ export function TerminalPanel({ projectPath, profile, paneKey, activeView, onGra
       ro.disconnect()
       unsubs.forEach((f) => f())
       const sid = sessionIdRef.current
-      if (sid) killTerminal(sid).catch(() => {})
+      if (sid) detachTerminal(sid).catch(() => {})
       term.dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [paneKey, profile, projectPath])
+  }, [sessionId, profile, projectPath])
 
   return <div ref={hostRef} className="terminal-host" />
 }

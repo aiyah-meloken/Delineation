@@ -1,20 +1,17 @@
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, Manager};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::{UnixListener, UnixStream};
+use tauri::{AppHandle, Manager};
 use tokio::sync::Mutex;
 
 const PROJECT_DIR: &str = ".delineation";
 const VIEWS_DIR: &str = ".delineation/views";
 const RUNTIME_DIR: &str = ".delineation/runtime";
-const SOCKET_FILE: &str = ".delineation/runtime/control.sock";
+const SOCKET_FILE: &str = ".delineation/runtime/daemon.sock";
 const LENSKITS_DIR: &str = ".delineation/lenskits";
 const VERSIONS_DIR: &str = ".delineation/versions/views";
 const SYSTEM_CODEX_PATH: &str = ".delineation/lenskits/system/operator/CODEX.md";
@@ -73,7 +70,6 @@ pub struct LensKitInfo {
 
 #[derive(Default)]
 pub struct ControlState {
-    servers: Mutex<HashMap<String, tokio::task::JoinHandle<()>>>,
     context: Mutex<WorkbenchContext>,
 }
 
@@ -83,6 +79,7 @@ impl ControlState {
     }
 }
 
+#[cfg(test)]
 #[derive(Debug, Deserialize)]
 struct JsonRpcRequest {
     #[allow(dead_code)]
@@ -668,9 +665,11 @@ pub async fn set_context(
     let store_path = project_path
         .as_ref()
         .map(|path| store_path(path).to_string_lossy().to_string());
-    let socket_path = project_path
-        .as_ref()
-        .map(|path| socket_path(path).to_string_lossy().to_string());
+    let socket_path = project_path.as_ref().map(|path| {
+        crate::daemon::socket_path(path)
+            .to_string_lossy()
+            .to_string()
+    });
 
     *context = WorkbenchContext {
         project_path,
@@ -682,99 +681,73 @@ pub async fn set_context(
     Ok(())
 }
 
-pub async fn get_context(app: &AppHandle, project_path: &str) -> WorkbenchContext {
-    let state = app.state::<ControlState>();
-    let context = state.context.lock().await;
-    WorkbenchContext {
-        project_path: Some(project_path.to_string()),
-        store_path: Some(store_path(project_path).to_string_lossy().to_string()),
-        socket_path: Some(socket_path(project_path).to_string_lossy().to_string()),
-        active_view: context.active_view.clone(),
-        lenskits: discover_lenskits(project_path).unwrap_or_default(),
-    }
-}
-
-pub async fn start(app: AppHandle, project_path: String) -> Result<ControlInfo> {
-    let info = ensure_project_layout(&project_path)?;
-    let socket = PathBuf::from(&info.socket_path);
-
-    let state = app.state::<ControlState>();
-    let mut servers = state.servers.lock().await;
-    if servers.contains_key(&project_path) {
-        return Ok(info);
-    }
-
-    if socket.exists() {
-        let _ = fs::remove_file(&socket);
-    }
-    let listener = UnixListener::bind(&socket)
-        .with_context(|| format!("bind control socket {}", socket.display()))?;
-
-    let app_for_task = app.clone();
-    let project_for_task = project_path.clone();
-    let handle = tokio::spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((stream, _)) => {
-                    let app = app_for_task.clone();
-                    let project_path = project_for_task.clone();
-                    tokio::spawn(async move {
-                        let _ = handle_connection(app, project_path, stream).await;
-                    });
-                }
-                Err(err) => {
-                    eprintln!("control socket accept failed: {err}");
-                    break;
-                }
-            }
+pub fn daemon_dispatch_core(
+    project_path: &str,
+    socket_path: String,
+    active_view: Option<String>,
+    method: &str,
+    params: Value,
+) -> Result<(Value, Option<crate::daemon::WorkbenchEvent>)> {
+    let result = match method {
+        "workbench.context.get" => Ok(json!(WorkbenchContext {
+            project_path: Some(project_path.to_string()),
+            store_path: Some(store_path(project_path).to_string_lossy().to_string()),
+            socket_path: Some(socket_path),
+            active_view,
+            lenskits: discover_lenskits(project_path).unwrap_or_default(),
+        })),
+        "lenskit.list" => discover_lenskits(project_path)
+            .and_then(|kits| serde_json::to_value(kits).map_err(Into::into)),
+        "view.create" => {
+            let (result, view_path) = view_create_core(project_path, params)?;
+            return Ok((
+                result,
+                Some(crate::daemon::WorkbenchEvent::ViewChanged {
+                    action: "create".to_string(),
+                    view_path,
+                }),
+            ));
         }
-    });
-
-    servers.insert(project_path.clone(), handle);
-    drop(servers);
-    set_context(app, Some(project_path), None).await?;
-
-    Ok(info)
-}
-
-async fn handle_connection(app: AppHandle, project_path: String, stream: UnixStream) -> Result<()> {
-    let (read, mut write) = stream.into_split();
-    let mut lines = BufReader::new(read).lines();
-
-    while let Some(line) = lines.next_line().await? {
-        if line.trim().is_empty() {
-            continue;
+        "view.updateA2UI" => {
+            let (result, view_path) = view_update_a2ui_core(project_path, params)?;
+            return Ok((
+                result,
+                Some(crate::daemon::WorkbenchEvent::ViewChanged {
+                    action: "update".to_string(),
+                    view_path,
+                }),
+            ));
         }
-        let response = handle_json_rpc_line(&app, &project_path, &line).await;
-        write.write_all(response.to_string().as_bytes()).await?;
-        write.write_all(b"\n").await?;
-    }
-
-    Ok(())
-}
-
-pub async fn handle_json_rpc_line(app: &AppHandle, project_path: &str, line: &str) -> Value {
-    let parsed = match serde_json::from_str::<JsonRpcRequest>(line) {
-        Ok(request) => request,
-        Err(err) => return json_rpc_error(None, -32700, format!("Parse error: {err}")),
-    };
-
-    let id = parsed.id.clone();
-    let Some(method) = parsed.method.as_deref() else {
-        return json_rpc_error(id, -32600, "Invalid Request: missing method");
-    };
-
-    match dispatch(
-        app,
-        project_path,
-        method,
-        parsed.params.unwrap_or_else(|| json!({})),
-    )
-    .await
-    {
-        Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
-        Err(err) => json_rpc_error(id, -32000, err.to_string()),
-    }
+        "view.updateStatus" => {
+            let (result, view_path) = view_update_status_core(project_path, params)?;
+            return Ok((
+                result,
+                Some(crate::daemon::WorkbenchEvent::ViewChanged {
+                    action: "update".to_string(),
+                    view_path,
+                }),
+            ));
+        }
+        "view.open" | "view.focus" => {
+            let view_path = normalize_view_path(
+                params
+                    .get("viewPath")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow!("viewPath is required"))?,
+            )?;
+            return Ok((
+                json!({ "viewPath": view_path }),
+                Some(crate::daemon::WorkbenchEvent::ViewChanged {
+                    action: "open".to_string(),
+                    view_path,
+                }),
+            ));
+        }
+        "view.version.list" => version_list(project_path, params),
+        "view.version.get" => version_get(project_path, params),
+        _ => Err(anyhow!("Unknown method: {method}")),
+    }?;
+    Ok((result, None))
 }
 
 #[cfg(test)]
@@ -794,7 +767,7 @@ async fn handle_json_rpc_line_without_app(project_path: &str, line: &str) -> Val
         "workbench.context.get" => Ok(json!(WorkbenchContext {
             project_path: Some(project_path.to_string()),
             store_path: Some(store_path(project_path).to_string_lossy().to_string()),
-            socket_path: Some(socket_path(project_path).to_string_lossy().to_string()),
+            socket_path: Some(crate::daemon::socket_path(project_path).to_string_lossy().to_string()),
             active_view: None,
             lenskits: discover_lenskits(project_path).unwrap_or_default(),
         })),
@@ -819,42 +792,13 @@ async fn handle_json_rpc_line_without_app(project_path: &str, line: &str) -> Val
     }
 }
 
+#[cfg(test)]
 fn json_rpc_error(id: Option<Value>, code: i32, message: impl Into<String>) -> Value {
     json!({
         "jsonrpc": "2.0",
         "id": id.unwrap_or(Value::Null),
         "error": { "code": code, "message": message.into() }
     })
-}
-
-async fn dispatch(
-    app: &AppHandle,
-    project_path: &str,
-    method: &str,
-    params: Value,
-) -> Result<Value> {
-    match method {
-        "workbench.context.get" => Ok(serde_json::to_value(get_context(app, project_path).await)?),
-        "workbench.window.open" | "workbench.window.focus" => workbench_window_focus(app),
-        "lenskit.list" => Ok(serde_json::to_value(discover_lenskits(project_path)?)?),
-        "view.create" => view_create(app, project_path, params).await,
-        "view.updateA2UI" => view_update_a2ui(app, project_path, params).await,
-        "view.updateStatus" => view_update_status(app, project_path, params).await,
-        "view.open" | "view.focus" => view_open(app, project_path, params).await,
-        "view.version.list" => version_list(project_path, params),
-        "view.version.get" => version_get(project_path, params),
-        _ => Err(anyhow!("Unknown method: {method}")),
-    }
-}
-
-fn workbench_window_focus(app: &AppHandle) -> Result<Value> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| anyhow!("main window not found"))?;
-    let _ = window.show();
-    let _ = window.unminimize();
-    window.set_focus()?;
-    Ok(json!({ "window": "main", "focused": true }))
 }
 
 fn a2ui_document(
@@ -874,15 +818,6 @@ fn a2ui_document(
         "versions": versions,
         "updatedAt": now_iso()
     })
-}
-
-async fn view_create(app: &AppHandle, project_path: &str, params: Value) -> Result<Value> {
-    let (result, view_path) = view_create_core(project_path, params)?;
-    app.emit(
-        "control://view-changed",
-        json!({ "action": "create", "viewPath": view_path }),
-    )?;
-    Ok(result)
 }
 
 fn view_create_core(project_path: &str, params: Value) -> Result<(Value, String)> {
@@ -940,15 +875,6 @@ fn view_create_core(project_path: &str, params: Value) -> Result<(Value, String)
     Ok((result, path))
 }
 
-async fn view_update_a2ui(app: &AppHandle, project_path: &str, params: Value) -> Result<Value> {
-    let (result, view_path) = view_update_a2ui_core(project_path, params)?;
-    app.emit(
-        "control://view-changed",
-        json!({ "action": "update", "viewPath": view_path }),
-    )?;
-    Ok(result)
-}
-
 fn view_update_a2ui_core(project_path: &str, params: Value) -> Result<(Value, String)> {
     let view_path = normalize_view_path(
         params
@@ -999,15 +925,6 @@ fn view_update_a2ui_core(project_path: &str, params: Value) -> Result<(Value, St
     Ok((result, view_path))
 }
 
-async fn view_update_status(app: &AppHandle, project_path: &str, params: Value) -> Result<Value> {
-    let (result, view_path) = view_update_status_core(project_path, params)?;
-    app.emit(
-        "control://view-changed",
-        json!({ "action": "update", "viewPath": view_path }),
-    )?;
-    Ok(result)
-}
-
 fn view_update_status_core(project_path: &str, params: Value) -> Result<(Value, String)> {
     let view_path = normalize_view_path(
         params
@@ -1052,20 +969,6 @@ fn view_update_status_core(project_path: &str, params: Value) -> Result<(Value, 
 
     let result = json!({ "viewPath": view_path, "title": title, "status": status });
     Ok((result, view_path))
-}
-
-async fn view_open(app: &AppHandle, _project_path: &str, params: Value) -> Result<Value> {
-    let view_path = normalize_view_path(
-        params
-            .get("viewPath")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("viewPath is required"))?,
-    )?;
-    app.emit(
-        "control://view-changed",
-        json!({ "action": "open", "viewPath": view_path }),
-    )?;
-    Ok(json!({ "viewPath": view_path }))
 }
 
 fn read_json_if_exists(path: &Path) -> Option<Value> {

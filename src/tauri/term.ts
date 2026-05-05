@@ -4,29 +4,34 @@ import type { A2UIGraph } from '../a2ui/schema'
 import type { TerminalProfile, TerminalProfileId } from '../terminal/sessionModel'
 
 export async function spawnTerminal(
+  sessionId: string,
   projectPath: string,
   profile: TerminalProfileId,
   activeView: string | null,
   cols: number,
   rows: number,
 ): Promise<string> {
-  return invoke('term_spawn', { projectPath, profile, activeView, cols, rows })
+  return invoke('term_spawn', { sessionId, projectPath, profile, activeView, cols, rows })
 }
 
 export async function listTerminalProfiles(): Promise<TerminalProfile[]> {
   return invoke('term_available_profiles')
 }
 
-export async function writeTerminal(sessionId: string, base64Data: string): Promise<void> {
-  return invoke('term_write', { sessionId, data: base64Data })
+export async function writeTerminal(projectPath: string, sessionId: string, base64Data: string): Promise<void> {
+  return invoke('term_write', { projectPath, sessionId, data: base64Data })
 }
 
-export async function resizeTerminal(sessionId: string, cols: number, rows: number): Promise<void> {
-  return invoke('term_resize', { sessionId, cols, rows })
+export async function resizeTerminal(projectPath: string, sessionId: string, cols: number, rows: number): Promise<void> {
+  return invoke('term_resize', { projectPath, sessionId, cols, rows })
 }
 
-export async function killTerminal(sessionId: string): Promise<void> {
-  return invoke('term_kill', { sessionId })
+export async function killTerminal(projectPath: string, sessionId: string): Promise<void> {
+  return invoke('term_kill', { projectPath, sessionId })
+}
+
+export async function detachTerminal(sessionId: string): Promise<void> {
+  return invoke('term_detach', { sessionId })
 }
 
 export interface TermDataEvent { session_id: string; bytes_b64: string }
