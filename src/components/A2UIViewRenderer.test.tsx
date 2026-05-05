@@ -31,6 +31,9 @@ describe('A2UIViewRenderer', () => {
     expect(screen.getByText('Subscription route entry point')).toBeTruthy()
     expect(screen.getByText('Versions')).toBeTruthy()
     expect(screen.getByText('v2')).toBeTruthy()
+    expect(globalThis.document.querySelector('.a2ui-view-scroll .a2ui-surface')).toBeTruthy()
+    expect(globalThis.document.querySelector('.a2ui-view-scroll .a2ui-facts')).toBeTruthy()
+    expect(globalThis.document.querySelector('.a2ui-view-scroll .a2ui-versions')).toBeTruthy()
   })
 
   it('does not process messages twice under React StrictMode', async () => {

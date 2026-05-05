@@ -734,7 +734,7 @@ button {
 
 .a2ui-view-host {
   display: grid;
-  grid-template-rows: 30px minmax(0, 1fr) auto;
+  grid-template-rows: 30px minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
   background: var(--panel);
@@ -765,10 +765,16 @@ button {
   padding: 0 8px;
 }
 
-.a2ui-surface {
+.a2ui-view-scroll {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+}
+
+.a2ui-surface {
+  min-width: 0;
+  min-height: auto;
+  overflow: visible;
   padding: 28px 36px;
   color: var(--text);
 }

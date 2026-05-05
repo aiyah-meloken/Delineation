@@ -66,7 +66,7 @@ export function A2UIViewRenderer({
           </div>
         </div>
       ) : surface ? (
-        <>
+        <div className="a2ui-view-scroll">
           <div className="a2ui-surface">
             <MarkdownContext.Provider value={renderMarkdown}>
               <A2uiSurface surface={surface} />
@@ -104,7 +104,7 @@ export function A2UIViewRenderer({
               </div>
             </section>
           )}
-        </>
+        </div>
       ) : (
         <div className="viewer-empty">
           <div className="empty-card">
