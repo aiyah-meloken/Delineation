@@ -82,7 +82,7 @@ describe('A2UI View document', () => {
     expect(() => parseA2UIViewText(JSON.stringify(doc))).not.toThrow()
   })
 
-  it('rejects basic catalog components with invalid v0.9 props', () => {
+  it('rejects basic catalog components that cannot be normalized to v0.9 props', () => {
     const doc = createA2UIViewDocument('Invalid Card', [
       {
         version: 'v0.9',
@@ -94,6 +94,27 @@ describe('A2UI View document', () => {
           surfaceId: 'main',
           components: [
             { id: 'root', component: 'Column', children: ['card'] },
+            { id: 'card', component: 'Card' },
+          ],
+        },
+      },
+    ] as A2uiMessage[])
+
+    expect(() => parseA2UIViewText(JSON.stringify(doc))).toThrow(/invalid a2ui component "card" \(Card\).*child/i)
+  })
+
+  it('normalizes legacy agent output that used layout gap and Card children', () => {
+    const doc = createA2UIViewDocument('Legacy Agent Output', [
+      {
+        version: 'v0.9',
+        createSurface: { surfaceId: 'main', catalogId: BASIC_CATALOG_ID },
+      },
+      {
+        version: 'v0.9',
+        updateComponents: {
+          surfaceId: 'main',
+          components: [
+            { id: 'root', component: 'Column', gap: 'medium', children: ['card'] },
             { id: 'card', component: 'Card', children: ['title', 'body'] },
             { id: 'title', component: 'Text', text: 'Title' },
             { id: 'body', component: 'Text', text: 'Body' },
@@ -102,7 +123,16 @@ describe('A2UI View document', () => {
       },
     ] as A2uiMessage[])
 
-    expect(() => parseA2UIViewText(JSON.stringify(doc))).toThrow(/invalid a2ui component "card" \(Card\).*child/i)
+    const parsed = parseA2UIViewText(JSON.stringify(doc))
+
+    expect(parsed.kind).toBe('a2ui-view')
+    if (parsed.kind === 'a2ui-view') {
+      const update = parsed.document.a2uiMessages.find((message) => 'updateComponents' in message)
+      const components = update && 'updateComponents' in update ? update.updateComponents.components : []
+      expect(components).toContainEqual({ id: 'root', component: 'Column', children: ['card'] })
+      expect(components).toContainEqual({ id: 'card', component: 'Card', child: 'card-content' })
+      expect(components).toContainEqual({ id: 'card-content', component: 'Column', children: ['title', 'body'] })
+    }
   })
 
   it('accepts a card that wraps multiple children in a column child', () => {

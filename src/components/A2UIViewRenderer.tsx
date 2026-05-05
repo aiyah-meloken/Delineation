@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { MessageProcessor, type SurfaceModel } from '@a2ui/web_core/v0_9'
 import { renderMarkdown } from '@a2ui/markdown-it'
 import {
@@ -27,11 +27,11 @@ export function A2UIViewRenderer({
 }: Props) {
   const [surface, setSurface] = useState<SurfaceModel<ReactComponentImplementation> | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const processor = useMemo(() => new MessageProcessor([basicCatalog]), [document])
 
   useEffect(() => {
     setSurface(null)
     setError(null)
+    const processor = new MessageProcessor([basicCatalog])
     const sub = processor.onSurfaceCreated((created) => {
       setSurface(created)
     })
@@ -43,7 +43,7 @@ export function A2UIViewRenderer({
     }
 
     return () => sub.unsubscribe()
-  }, [document, processor])
+  }, [document])
 
   return (
     <div className="a2ui-view-host">

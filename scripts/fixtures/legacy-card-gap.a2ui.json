@@ -1,0 +1,65 @@
+{
+  "kind": "a2ui-view",
+  "version": 1,
+  "title": "Render Lab Legacy Card Gap",
+  "status": "reviewed",
+  "a2uiMessages": [
+    {
+      "version": "v0.9",
+      "createSurface": {
+        "surfaceId": "main",
+        "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json"
+      }
+    },
+    {
+      "version": "v0.9",
+      "updateComponents": {
+        "surfaceId": "main",
+        "components": [
+          {
+            "id": "root",
+            "component": "Column",
+            "gap": "medium",
+            "children": ["title", "summary", "card"]
+          },
+          {
+            "id": "title",
+            "component": "Text",
+            "variant": "h1",
+            "text": "Render Lab Legacy Card Gap"
+          },
+          {
+            "id": "summary",
+            "component": "Text",
+            "text": "This fixture intentionally contains old Agent output: Column.gap and Card.children. The app should normalize it before rendering."
+          },
+          {
+            "id": "card",
+            "component": "Card",
+            "children": ["card-title", "card-body"]
+          },
+          {
+            "id": "card-title",
+            "component": "Text",
+            "variant": "h2",
+            "text": "Control Surface"
+          },
+          {
+            "id": "card-body",
+            "component": "Text",
+            "text": "If this text is visible inside the card, the renderer compatibility path is working."
+          }
+        ]
+      }
+    }
+  ],
+  "facts": [
+    {
+      "id": "fixture-source",
+      "label": "Fixture backend served this document",
+      "source": "scripts/fixtures/legacy-card-gap.a2ui.json"
+    }
+  ],
+  "versions": [],
+  "updatedAt": "2026-05-05T00:00:00.000Z"
+}

@@ -273,7 +273,7 @@ export default function App() {
   const canvas = useCanvasStore()
 
   const downloadedUpdateRef = useRef<Update | null>(null)
-  const [appInfo, setAppInfo] = useState<AppInfo>({ name: 'Delineation', version: '0.1.5' })
+  const [appInfo, setAppInfo] = useState<AppInfo>({ name: 'Delineation', version: '0.1.6' })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState>(initialUpdateState)
   const [lensKits, setLensKits] = useState<LensKitInfo[]>([])

@@ -1,0 +1,46 @@
+body {
+  margin: 0;
+  background: #171821;
+  color: #d7ddf7;
+}
+
+.render-lab {
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.render-lab-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #2b2f42;
+  background: #10131b;
+}
+
+.render-lab-toolbar div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.render-lab-toolbar span {
+  color: #8d95b4;
+  font-size: 12px;
+}
+
+.render-lab-toolbar input {
+  width: min(720px, 60vw);
+  border: 1px solid #38415f;
+  border-radius: 6px;
+  background: #171b27;
+  color: #d7ddf7;
+  padding: 8px 10px;
+}
+
+.render-lab-surface {
+  min-height: 0;
+  overflow: auto;
+}

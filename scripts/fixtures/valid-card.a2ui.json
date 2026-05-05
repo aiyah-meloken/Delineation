@@ -1,0 +1,58 @@
+{
+  "kind": "a2ui-view",
+  "version": 1,
+  "title": "Render Lab Valid Card",
+  "status": "confirmed",
+  "a2uiMessages": [
+    {
+      "version": "v0.9",
+      "createSurface": {
+        "surfaceId": "main",
+        "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json"
+      }
+    },
+    {
+      "version": "v0.9",
+      "updateComponents": {
+        "surfaceId": "main",
+        "components": [
+          {
+            "id": "root",
+            "component": "Column",
+            "children": ["title", "card"]
+          },
+          {
+            "id": "title",
+            "component": "Text",
+            "variant": "h1",
+            "text": "Render Lab Valid Card"
+          },
+          {
+            "id": "card",
+            "component": "Card",
+            "child": "card-content"
+          },
+          {
+            "id": "card-content",
+            "component": "Column",
+            "children": ["card-title", "card-body"]
+          },
+          {
+            "id": "card-title",
+            "component": "Text",
+            "variant": "h2",
+            "text": "A2UI v0.9"
+          },
+          {
+            "id": "card-body",
+            "component": "Text",
+            "text": "This fixture uses the official Card.child contract."
+          }
+        ]
+      }
+    }
+  ],
+  "facts": [],
+  "versions": [],
+  "updatedAt": "2026-05-05T00:00:00.000Z"
+}

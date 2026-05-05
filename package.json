@@ -1,12 +1,14 @@
 {
   "name": "delineation",
   "private": true,
-  "version": "0.1.5",
+  "version": "0.1.6",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "render-lab:backend": "node scripts/a2ui-fixture-server.mjs",
+    "render-lab:frontend": "vite --host 127.0.0.1 --port 1430",
     "tauri": "tauri",
     "test": "vitest run --passWithNoTests",
     "test:watch": "vitest"

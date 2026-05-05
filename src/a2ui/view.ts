@@ -98,12 +98,13 @@ export function parseA2UIViewText(text: string): ParsedViewDocument {
 
   const parsed = JSON.parse(text) as unknown
   if (isA2UIViewDocument(parsed)) {
-    const result = A2uiMessageListSchema.safeParse(parsed.a2uiMessages)
+    const a2uiMessages = normalizeBasicCatalogMessages(parsed.a2uiMessages)
+    const result = A2uiMessageListSchema.safeParse(a2uiMessages)
     if (!result.success) {
       throw new Error(`Invalid A2UI messages: ${result.error.message}`)
     }
-    validateBasicCatalogComponents(parsed.a2uiMessages)
-    return { kind: 'a2ui-view', document: parsed }
+    validateBasicCatalogComponents(a2uiMessages)
+    return { kind: 'a2ui-view', document: { ...parsed, a2uiMessages } }
   }
 
   const legacy = isValidA2UIGraph(parsed)
@@ -124,6 +125,66 @@ export function isA2UIViewDocument(value: unknown): value is A2UIViewDocument {
     Array.isArray(v.facts) &&
     Array.isArray(v.versions)
   )
+}
+
+export function normalizeBasicCatalogMessages(messages: A2uiMessage[]): A2uiMessage[] {
+  const normalized = structuredClone(messages) as A2uiMessage[]
+  const basicSurfaceIds = new Set<string>()
+
+  for (const message of normalized) {
+    if ('createSurface' in message && message.createSurface.catalogId === BASIC_CATALOG_ID) {
+      basicSurfaceIds.add(message.createSurface.surfaceId)
+      continue
+    }
+
+    if (!('updateComponents' in message) || !basicSurfaceIds.has(message.updateComponents.surfaceId)) continue
+    const componentRecords = message.updateComponents.components as A2UIComponentRecord[]
+    const usedIds = new Set(componentRecords.map((component) => component.id))
+    const nextComponents: A2UIComponentRecord[] = []
+
+    for (const component of componentRecords) {
+      if (isLayoutComponent(component.component)) {
+        delete component.gap
+      }
+
+      if (component.component === 'Card') {
+        const children = component.children
+        delete component.children
+        if (Array.isArray(children) && typeof component.child !== 'string') {
+          const contentId = nextAvailableComponentId(`${component.id}-content`, usedIds)
+          usedIds.add(contentId)
+          component.child = contentId
+          nextComponents.push(component)
+          nextComponents.push({
+            id: contentId,
+            component: 'Column',
+            children,
+          })
+          continue
+        }
+      }
+
+      nextComponents.push(component)
+    }
+
+    message.updateComponents.components = nextComponents as typeof message.updateComponents.components
+  }
+
+  return normalized
+}
+
+function isLayoutComponent(component: string): boolean {
+  return component === 'Row' || component === 'Column' || component === 'List'
+}
+
+function nextAvailableComponentId(base: string, usedIds: Set<string>): string {
+  let candidate = base
+  let index = 2
+  while (usedIds.has(candidate)) {
+    candidate = `${base}-${index}`
+    index += 1
+  }
+  return candidate
 }
 
 export function validateBasicCatalogComponents(messages: A2uiMessage[]): void {

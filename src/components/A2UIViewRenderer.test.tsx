@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from '@testing-library/react'
+import React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import type { A2uiMessage } from '@a2ui/web_core/v0_9'
 import { createA2UIViewDocument } from '../a2ui/view'
@@ -30,6 +31,17 @@ describe('A2UIViewRenderer', () => {
     expect(screen.getByText('Subscription route entry point')).toBeTruthy()
     expect(screen.getByText('Versions')).toBeTruthy()
     expect(screen.getByText('v2')).toBeTruthy()
+  })
+
+  it('does not process messages twice under React StrictMode', async () => {
+    render(
+      <React.StrictMode>
+        <A2UIViewRenderer document={createA2UIViewDocument('Strict Mode View')} />
+      </React.StrictMode>,
+    )
+
+    expect(await screen.findByText(/Strict Mode View/)).toBeTruthy()
+    expect(screen.queryByText('A2UI render failed')).toBeNull()
   })
 
   it('surfaces A2UI processor errors', async () => {
