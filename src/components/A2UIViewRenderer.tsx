@@ -13,9 +13,18 @@ import type { ViewVersionInfo } from '../tauri/control'
 interface Props {
   document: A2UIViewDocument
   versions?: ViewVersionInfo[]
+  selectedVersionId?: string | null
+  onSelectVersion?: (versionId: string) => void
+  onShowCurrent?: () => void
 }
 
-export function A2UIViewRenderer({ document, versions = [] }: Props) {
+export function A2UIViewRenderer({
+  document,
+  versions = [],
+  selectedVersionId = null,
+  onSelectVersion,
+  onShowCurrent,
+}: Props) {
   const [surface, setSurface] = useState<SurfaceModel<ReactComponentImplementation> | null>(null)
   const [error, setError] = useState<string | null>(null)
   const processor = useMemo(() => new MessageProcessor([basicCatalog]), [document])
@@ -40,8 +49,14 @@ export function A2UIViewRenderer({ document, versions = [] }: Props) {
     <div className="a2ui-view-host">
       <div className="a2ui-view-meta" aria-label="View metadata">
         <span>{document.status}</span>
+        {selectedVersionId && <span>Previewing {selectedVersionId}</span>}
         <span>{versions.length} version{versions.length === 1 ? '' : 's'}</span>
         {document.updatedAt && <span>{new Date(document.updatedAt).toLocaleString()}</span>}
+        {selectedVersionId && onShowCurrent && (
+          <button className="a2ui-meta-button" onClick={onShowCurrent}>
+            Current
+          </button>
+        )}
       </div>
       {error ? (
         <div className="viewer-empty">
@@ -75,10 +90,16 @@ export function A2UIViewRenderer({ document, versions = [] }: Props) {
               <h2>Versions</h2>
               <div className="a2ui-version-list">
                 {versions.slice(0, 6).map((version) => (
-                  <div className="a2ui-version" key={version.id}>
+                  <button
+                    className={`a2ui-version ${version.id === selectedVersionId ? 'active' : ''}`}
+                    key={version.id}
+                    onClick={() => onSelectVersion?.(version.id)}
+                    type="button"
+                    aria-label={`Preview version ${version.id}`}
+                  >
                     <code>{version.id}</code>
                     <span>{new Date(version.createdAt).toLocaleString()}</span>
-                  </div>
+                  </button>
                 ))}
               </div>
             </section>

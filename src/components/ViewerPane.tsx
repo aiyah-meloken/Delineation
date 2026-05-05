@@ -15,11 +15,24 @@ interface Props {
   /** A2UI v0.9 View document for an .a2ui.json view, null otherwise. */
   a2uiView?: A2UIViewDocument | null
   versions?: ViewVersionInfo[]
+  selectedVersionId?: string | null
+  onSelectVersion?: (versionId: string) => void
+  onShowCurrentVersion?: () => void
   /** Parse error, if any (canvas only). */
   parseError?: string | null
 }
 
-export function ViewerPane({ filename, html, graph, a2uiView, versions = [], parseError }: Props) {
+export function ViewerPane({
+  filename,
+  html,
+  graph,
+  a2uiView,
+  versions = [],
+  selectedVersionId = null,
+  onSelectVersion,
+  onShowCurrentVersion,
+  parseError,
+}: Props) {
   if (!filename) {
     return (
       <div className="viewer-empty">
@@ -33,7 +46,17 @@ export function ViewerPane({ filename, html, graph, a2uiView, versions = [], par
   }
 
   if (filename.toLowerCase().endsWith('.a2ui.json')) {
-    if (a2uiView) return <A2UIViewRenderer document={a2uiView} versions={versions} />
+    if (a2uiView) {
+      return (
+        <A2UIViewRenderer
+          document={a2uiView}
+          versions={versions}
+          selectedVersionId={selectedVersionId}
+          onSelectVersion={onSelectVersion}
+          onShowCurrent={onShowCurrentVersion}
+        />
+      )
+    }
     return <CanvasViewer graph={graph} parseError={parseError} />
   }
 

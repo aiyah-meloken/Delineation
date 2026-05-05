@@ -753,6 +753,18 @@ button {
   user-select: none;
 }
 
+.a2ui-meta-button {
+  margin-left: auto;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: #202536;
+  color: var(--text-soft);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 20px;
+  padding: 0 8px;
+}
+
 .a2ui-surface {
   min-width: 0;
   min-height: 0;
@@ -819,8 +831,23 @@ button {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  width: 100%;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   color: var(--text-faint);
+  cursor: pointer;
   font-size: 12px;
+  padding: 4px 0;
+  text-align: left;
+}
+
+.a2ui-version:hover,
+.a2ui-version.active {
+  color: var(--text);
+  background: #202536;
+  padding-left: 8px;
+  padding-right: 8px;
 }
 
 .a2ui-version code {

@@ -1,5 +1,5 @@
-import { render, screen } from '@testing-library/react'
-import { describe, expect, it } from 'vitest'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { describe, expect, it, vi } from 'vitest'
 import type { A2uiMessage } from '@a2ui/web_core/v0_9'
 import { createA2UIViewDocument } from '../a2ui/view'
 import { A2UIViewRenderer } from './A2UIViewRenderer'
@@ -49,5 +49,23 @@ describe('A2UIViewRenderer', () => {
     render(<A2UIViewRenderer document={document} />)
 
     expect(await screen.findByText('A2UI render failed')).toBeTruthy()
+  })
+
+  it('lets the workbench request a historical version preview', async () => {
+    const onSelectVersion = vi.fn()
+
+    render(
+      <A2UIViewRenderer
+        document={createA2UIViewDocument('Versioned View')}
+        versions={[
+          { id: 'v2', createdAt: '2026-05-04T16:00:00.000Z', path: '/tmp/v2.json' },
+        ]}
+        onSelectVersion={onSelectVersion}
+      />,
+    )
+
+    fireEvent.click(await screen.findByRole('button', { name: /preview version v2/i }))
+
+    expect(onSelectVersion).toHaveBeenCalledWith('v2')
   })
 })

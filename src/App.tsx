@@ -60,6 +60,7 @@ import {
 } from './terminal/sessionModel'
 import { listTerminalProfiles } from './tauri/term'
 import {
+  getViewVersion,
   listLensKits,
   listViewVersions,
   onControlViewChanged,
@@ -167,12 +168,16 @@ function ViewPaneContent({
   const [html, setHtml] = useState<string | null>(null)
   const [a2uiView, setA2uiView] = useState<A2UIViewDocument | null>(null)
   const [versions, setVersions] = useState<ViewVersionInfo[]>([])
+  const [currentA2uiView, setCurrentA2uiView] = useState<A2UIViewDocument | null>(null)
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       setHtml(null)
       setA2uiView(null)
+      setCurrentA2uiView(null)
+      setSelectedVersionId(null)
       setVersions([])
       if (!filename) return
       try {
@@ -188,6 +193,7 @@ function ViewPaneContent({
           const parsed = parseA2UIViewText(text)
           if (parsed.kind === 'a2ui-view') {
             setA2uiView(parsed.document)
+            setCurrentA2uiView(parsed.document)
           } else {
             setGraph(filename, parsed.graph)
           }
@@ -210,6 +216,25 @@ function ViewPaneContent({
     }
   }, [projectPath, filename, reloadKey, setGraph])
 
+  async function handleSelectVersion(versionId: string) {
+    if (!filename) return
+    try {
+      const text = await getViewVersion(projectPath, filename, versionId)
+      const parsed = parseA2UIViewText(text)
+      if (parsed.kind === 'a2ui-view') {
+        setA2uiView(parsed.document)
+        setSelectedVersionId(versionId)
+      }
+    } catch (err) {
+      console.error('getViewVersion failed:', err)
+    }
+  }
+
+  function handleShowCurrentVersion() {
+    if (currentA2uiView) setA2uiView(currentA2uiView)
+    setSelectedVersionId(null)
+  }
+
   return (
     <ViewerPane
       filename={filename}
@@ -217,6 +242,9 @@ function ViewPaneContent({
       graph={graph}
       a2uiView={a2uiView}
       versions={versions}
+      selectedVersionId={selectedVersionId}
+      onSelectVersion={handleSelectVersion}
+      onShowCurrentVersion={handleShowCurrentVersion}
     />
   )
 }
