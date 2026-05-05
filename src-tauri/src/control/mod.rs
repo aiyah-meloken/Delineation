@@ -606,6 +606,12 @@ Message shape:
 Save an array of A2UI v0.9 messages. The Workbench renderer uses:
 `https://a2ui.org/specification/v0_9/basic_catalog.json`
 
+Important basic catalog rules:
+- `Row`, `Column`, and `List` use `children: ["child-id"]`.
+- `Card` uses exactly one `child: "child-id"`. If a card needs a title and body, create a `Column` component and set the card's `child` to that Column. Do not put `children` directly on `Card`.
+- `Tabs` uses `tabs: [{ "title": "...", "child": "child-id" }]`.
+- Every referenced child id must exist in the same View.
+
 ```json
 [
   {
@@ -625,7 +631,11 @@ Save an array of A2UI v0.9 messages. The Workbench renderer uses:
         { "id": "summary", "component": "Text", "text": "Short project-specific summary with code evidence." },
         { "id": "steps", "component": "Column", "children": ["step1", "step2"] },
         { "id": "step1", "component": "Text", "text": "1. User action -> relevant file/function." },
-        { "id": "step2", "component": "Text", "text": "2. Backend/API/data flow -> relevant file/function." }
+        { "id": "step2", "component": "Text", "text": "2. Backend/API/data flow -> relevant file/function." },
+        { "id": "risk-card", "component": "Card", "child": "risk-content" },
+        { "id": "risk-content", "component": "Column", "children": ["risk-title", "risk-body"] },
+        { "id": "risk-title", "component": "Text", "variant": "h2", "text": "Risk" },
+        { "id": "risk-body", "component": "Text", "text": "A Card wraps one child, so multiple elements go inside this Column." }
       ]
     }
   }

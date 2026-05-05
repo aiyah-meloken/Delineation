@@ -46,6 +46,17 @@ export function ViewerPane({
   }
 
   if (filename.toLowerCase().endsWith('.a2ui.json')) {
+    if (parseError) {
+      return (
+        <div className="viewer-empty">
+          <div className="empty-card">
+            <FileText size={22} />
+            <h2>Invalid A2UI View</h2>
+            <p>{parseError}</p>
+          </div>
+        </div>
+      )
+    }
     if (a2uiView) {
       return (
         <A2UIViewRenderer

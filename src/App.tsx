@@ -170,6 +170,7 @@ function ViewPaneContent({
   const [versions, setVersions] = useState<ViewVersionInfo[]>([])
   const [currentA2uiView, setCurrentA2uiView] = useState<A2UIViewDocument | null>(null)
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null)
+  const [parseError, setParseError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -178,6 +179,7 @@ function ViewPaneContent({
       setA2uiView(null)
       setCurrentA2uiView(null)
       setSelectedVersionId(null)
+      setParseError(null)
       setVersions([])
       if (!filename) return
       try {
@@ -206,8 +208,12 @@ function ViewPaneContent({
         }
       } catch (err) {
         console.error('readViewFile failed:', err)
-        if (!cancelled && filename.toLowerCase().endsWith('.html')) {
-          setHtml(`<p style="font-family:sans-serif;padding:24px;color:#a00">Failed to read ${filename}: ${String(err)}</p>`)
+        if (!cancelled) {
+          if (filename.toLowerCase().endsWith('.html')) {
+            setHtml(`<p style="font-family:sans-serif;padding:24px;color:#a00">Failed to read ${filename}: ${String(err)}</p>`)
+          } else {
+            setParseError(String(err))
+          }
         }
       }
     })()
@@ -241,6 +247,7 @@ function ViewPaneContent({
       html={html}
       graph={graph}
       a2uiView={a2uiView}
+      parseError={parseError}
       versions={versions}
       selectedVersionId={selectedVersionId}
       onSelectVersion={handleSelectVersion}
@@ -266,7 +273,7 @@ export default function App() {
   const canvas = useCanvasStore()
 
   const downloadedUpdateRef = useRef<Update | null>(null)
-  const [appInfo, setAppInfo] = useState<AppInfo>({ name: 'Delineation', version: '0.1.3' })
+  const [appInfo, setAppInfo] = useState<AppInfo>({ name: 'Delineation', version: '0.1.5' })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState>(initialUpdateState)
   const [lensKits, setLensKits] = useState<LensKitInfo[]>([])

@@ -81,4 +81,51 @@ describe('A2UI View document', () => {
 
     expect(() => parseA2UIViewText(JSON.stringify(doc))).not.toThrow()
   })
+
+  it('rejects basic catalog components with invalid v0.9 props', () => {
+    const doc = createA2UIViewDocument('Invalid Card', [
+      {
+        version: 'v0.9',
+        createSurface: { surfaceId: 'main', catalogId: BASIC_CATALOG_ID },
+      },
+      {
+        version: 'v0.9',
+        updateComponents: {
+          surfaceId: 'main',
+          components: [
+            { id: 'root', component: 'Column', children: ['card'] },
+            { id: 'card', component: 'Card', children: ['title', 'body'] },
+            { id: 'title', component: 'Text', text: 'Title' },
+            { id: 'body', component: 'Text', text: 'Body' },
+          ],
+        },
+      },
+    ] as A2uiMessage[])
+
+    expect(() => parseA2UIViewText(JSON.stringify(doc))).toThrow(/invalid a2ui component "card" \(Card\).*child/i)
+  })
+
+  it('accepts a card that wraps multiple children in a column child', () => {
+    const doc = createA2UIViewDocument('Valid Card', [
+      {
+        version: 'v0.9',
+        createSurface: { surfaceId: 'main', catalogId: BASIC_CATALOG_ID },
+      },
+      {
+        version: 'v0.9',
+        updateComponents: {
+          surfaceId: 'main',
+          components: [
+            { id: 'root', component: 'Column', children: ['card'] },
+            { id: 'card', component: 'Card', child: 'card-content' },
+            { id: 'card-content', component: 'Column', children: ['title', 'body'] },
+            { id: 'title', component: 'Text', text: 'Title' },
+            { id: 'body', component: 'Text', text: 'Body' },
+          ],
+        },
+      },
+    ] as A2uiMessage[])
+
+    expect(() => parseA2UIViewText(JSON.stringify(doc))).not.toThrow()
+  })
 })
