@@ -54,7 +54,7 @@ export async function readAppInfo(): Promise<AppInfo> {
     const [name, version] = await Promise.all([getName(), getVersion()])
     return { name, version }
   } catch {
-    return { name: 'Delineation', version: '0.1.8' }
+    return { name: 'Delineation', version: '0.1.9' }
   }
 }
 
