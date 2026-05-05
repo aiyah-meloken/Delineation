@@ -6,10 +6,11 @@ import type { TerminalProfile, TerminalProfileId } from '../terminal/sessionMode
 export async function spawnTerminal(
   projectPath: string,
   profile: TerminalProfileId,
+  activeView: string | null,
   cols: number,
   rows: number,
 ): Promise<string> {
-  return invoke('term_spawn', { projectPath, profile, cols, rows })
+  return invoke('term_spawn', { projectPath, profile, activeView, cols, rows })
 }
 
 export async function listTerminalProfiles(): Promise<TerminalProfile[]> {

@@ -20,10 +20,11 @@ interface Props {
   profile: TerminalProfileId
   /** Stable identifier so each canvas tab gets its own terminal. */
   paneKey: string
+  activeView: string | null
   onGraphReady?: (graph: A2UIGraph) => void
 }
 
-export function TerminalPanel({ projectPath, profile, paneKey, onGraphReady }: Props) {
+export function TerminalPanel({ projectPath, profile, paneKey, activeView, onGraphReady }: Props) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const sessionIdRef = useRef<string | null>(null)
 
@@ -94,7 +95,7 @@ export function TerminalPanel({ projectPath, profile, paneKey, onGraphReady }: P
           // TUI never has to redraw mid-stream because the size changed.
           const cols = term.cols && term.cols >= 2 ? term.cols : 80
           const rows = term.rows && term.rows >= 2 ? term.rows : 24
-          const sid = await spawnTerminal(projectPath, profile, cols, rows)
+          const sid = await spawnTerminal(projectPath, profile, activeView, cols, rows)
           if (cancelled) {
             killTerminal(sid).catch(() => {})
             return

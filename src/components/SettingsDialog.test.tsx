@@ -16,10 +16,25 @@ describe('SettingsDialog', () => {
         onClose={vi.fn()}
         onRestartToUpdate={vi.fn()}
         onOpenInspector={vi.fn()}
+        lensKits={[{
+          id: 'system',
+          name: 'System A2UI Orientation',
+          version: '0.1.0',
+          description: 'Built-in LensKit',
+          path: '/project/.delineation/lenskits/system',
+          hasOperator: true,
+          hasRenderer: true,
+          hasWatcher: true,
+          operatorFiles: ['CODEX.md'],
+          rendererFiles: ['basic-catalog.json'],
+          watcherFiles: ['README.md'],
+        }]}
       />,
     )
 
-    expect(screen.getByText('0.1.0')).toBeTruthy()
+    expect(screen.getAllByText('0.1.0').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('System A2UI Orientation')).toBeTruthy()
+    expect(screen.getByText('operator')).toBeTruthy()
     expect(screen.getByRole('button', { name: /restart to update/i })).toBeTruthy()
   })
 })

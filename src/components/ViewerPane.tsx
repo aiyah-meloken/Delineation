@@ -1,5 +1,8 @@
 import type { A2UIGraph } from '../a2ui/schema'
+import type { A2UIViewDocument } from '../a2ui/view'
+import type { ViewVersionInfo } from '../tauri/control'
 import { CanvasViewer } from './CanvasViewer'
+import { A2UIViewRenderer } from './A2UIViewRenderer'
 import { CircleDot, FileText, History, Link2 } from 'lucide-react'
 
 interface Props {
@@ -9,11 +12,14 @@ interface Props {
   html: string | null
   /** A2UI graph for an .a2ui.json view, null otherwise. */
   graph: A2UIGraph | null
+  /** A2UI v0.9 View document for an .a2ui.json view, null otherwise. */
+  a2uiView?: A2UIViewDocument | null
+  versions?: ViewVersionInfo[]
   /** Parse error, if any (canvas only). */
   parseError?: string | null
 }
 
-export function ViewerPane({ filename, html, graph, parseError }: Props) {
+export function ViewerPane({ filename, html, graph, a2uiView, versions = [], parseError }: Props) {
   if (!filename) {
     return (
       <div className="viewer-empty">
@@ -27,6 +33,7 @@ export function ViewerPane({ filename, html, graph, parseError }: Props) {
   }
 
   if (filename.toLowerCase().endsWith('.a2ui.json')) {
+    if (a2uiView) return <A2UIViewRenderer document={a2uiView} versions={versions} />
     return <CanvasViewer graph={graph} parseError={parseError} />
   }
 

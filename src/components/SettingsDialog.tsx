@@ -1,5 +1,6 @@
 import { Bug, RotateCw, X } from 'lucide-react'
 import type { AppInfo, UpdateState } from '../tauri/update'
+import type { LensKitInfo } from '../tauri/control'
 
 interface Props {
   appInfo: AppInfo
@@ -7,6 +8,7 @@ interface Props {
   onClose: () => void
   onRestartToUpdate: () => void
   onOpenInspector: () => void
+  lensKits?: LensKitInfo[]
 }
 
 function formatBytes(value: number): string {
@@ -27,6 +29,7 @@ export function SettingsDialog({
   onClose,
   onRestartToUpdate,
   onOpenInspector,
+  lensKits = [],
 }: Props) {
   const canRestart = updateState.phase === 'ready'
 
@@ -59,6 +62,31 @@ export function SettingsDialog({
               <Bug size={14} />
               <span>Open Inspector</span>
             </button>
+          </div>
+          <div className="settings-row settings-row-block">
+            <div>
+              <div className="settings-label">LensKits</div>
+              {lensKits.length === 0 ? (
+                <div className="settings-value">No LensKits discovered for this Project.</div>
+              ) : (
+                <div className="lenskit-list">
+                  {lensKits.map((kit) => (
+                    <div className="lenskit-card" key={kit.id}>
+                      <div className="lenskit-card-title">
+                        <span>{kit.name}</span>
+                        <span>{kit.version}</span>
+                      </div>
+                      <p>{kit.description}</p>
+                      <div className="lenskit-parts">
+                        <span className={kit.hasOperator ? 'enabled' : ''}>operator</span>
+                        <span className={kit.hasRenderer ? 'enabled' : ''}>renderer</span>
+                        <span className={kit.hasWatcher ? 'enabled' : ''}>watcher</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
           <div className="settings-row">
             <div>

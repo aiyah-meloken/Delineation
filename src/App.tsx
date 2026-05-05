@@ -21,11 +21,17 @@ import {
   pathBasename,
   renameProjectFolder,
   renameProjectView,
-  writeViewGraph,
+  writeViewText,
 } from './tauri/fs'
 import { loadLastProject, loadWindowSize, saveLastProject, saveWindowSize } from './tauri/persistence'
 import { seedSampleProjectIfMissing } from './seed/seedSampleProject'
-import { emptyGraph, isValidA2UIGraph, type A2UIGraph } from './a2ui/schema'
+import type { A2UIGraph } from './a2ui/schema'
+import {
+  createA2UIViewDocument,
+  legacyGraphToViewDocument,
+  parseA2UIViewText,
+  type A2UIViewDocument,
+} from './a2ui/view'
 import { Sidebar } from './components/Sidebar'
 import { TabStrip } from './components/TabStrip'
 import { ViewerPane } from './components/ViewerPane'
@@ -53,12 +59,22 @@ import {
   type TerminalSession,
 } from './terminal/sessionModel'
 import { listTerminalProfiles } from './tauri/term'
+import {
+  listLensKits,
+  listViewVersions,
+  onControlViewChanged,
+  setControlContext,
+  startControl,
+  type LensKitInfo,
+  type ViewVersionInfo,
+} from './tauri/control'
 import { openInspector, reloadApp } from './tauri/inspector'
 import {
   checkAndDownloadUpdate,
   initialUpdateState,
   installUpdateAndRelaunch,
   readAppInfo,
+  startUpdateCheckLoop,
   type AppInfo,
   type UpdateState,
 } from './tauri/update'
@@ -137,15 +153,27 @@ function appTitle(projectName: string | null, activeTab: string | null): string 
   return 'Delineation'
 }
 
-function ViewPaneContent({ projectPath, filename }: { projectPath: string; filename: string | null }) {
+function ViewPaneContent({
+  projectPath,
+  filename,
+  reloadKey,
+}: {
+  projectPath: string
+  filename: string | null
+  reloadKey: number
+}) {
   const graph = useCanvasStore((state) => filename ? state.graphs[filename] ?? null : null)
   const setGraph = useCanvasStore((state) => state.setGraph)
   const [html, setHtml] = useState<string | null>(null)
+  const [a2uiView, setA2uiView] = useState<A2UIViewDocument | null>(null)
+  const [versions, setVersions] = useState<ViewVersionInfo[]>([])
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
       setHtml(null)
+      setA2uiView(null)
+      setVersions([])
       if (!filename) return
       try {
         const text = await readViewFile(projectPath, filename)
@@ -154,12 +182,21 @@ function ViewPaneContent({ projectPath, filename }: { projectPath: string; filen
           setHtml(text)
         } else if (filename.toLowerCase().endsWith('.a2ui.json')) {
           if (text.trim().length === 0) {
-            setGraph(filename, emptyGraph())
+            setA2uiView(createA2UIViewDocument(displayViewName(filename)))
             return
           }
-          const parsed = JSON.parse(text)
-          const v = isValidA2UIGraph(parsed)
-          setGraph(filename, v.ok ? parsed as A2UIGraph : emptyGraph())
+          const parsed = parseA2UIViewText(text)
+          if (parsed.kind === 'a2ui-view') {
+            setA2uiView(parsed.document)
+          } else {
+            setGraph(filename, parsed.graph)
+          }
+          try {
+            const nextVersions = await listViewVersions(projectPath, filename)
+            if (!cancelled) setVersions(nextVersions)
+          } catch {
+            // Browser preview / old projects can render without version metadata.
+          }
         }
       } catch (err) {
         console.error('readViewFile failed:', err)
@@ -171,9 +208,17 @@ function ViewPaneContent({ projectPath, filename }: { projectPath: string; filen
     return () => {
       cancelled = true
     }
-  }, [projectPath, filename, setGraph])
+  }, [projectPath, filename, reloadKey, setGraph])
 
-  return <ViewerPane filename={filename} html={html} graph={graph} />
+  return (
+    <ViewerPane
+      filename={filename}
+      html={html}
+      graph={graph}
+      a2uiView={a2uiView}
+      versions={versions}
+    />
+  )
 }
 
 export default function App() {
@@ -193,9 +238,11 @@ export default function App() {
   const canvas = useCanvasStore()
 
   const downloadedUpdateRef = useRef<Update | null>(null)
-  const [appInfo, setAppInfo] = useState<AppInfo>({ name: 'Delineation', version: '0.1.0' })
+  const [appInfo, setAppInfo] = useState<AppInfo>({ name: 'Delineation', version: '0.1.3' })
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [updateState, setUpdateState] = useState<UpdateState>(initialUpdateState)
+  const [lensKits, setLensKits] = useState<LensKitInfo[]>([])
+  const [viewReloadKey, setViewReloadKey] = useState(0)
   const [appContextMenu, setAppContextMenu] = useState<{ x: number; y: number } | null>(null)
   const [projectName, setProjectName] = useState<string | null>(null)
   const [projectGuide, setProjectGuide] = useState<ProjectGuideState | null>(null)
@@ -239,17 +286,13 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      const update = await checkAndDownloadUpdate((state) => {
-        if (!cancelled) setUpdateState(state)
-      })
-      if (!cancelled) downloadedUpdateRef.current = update
-    })()
-
-    return () => {
-      cancelled = true
-    }
+    return startUpdateCheckLoop({
+      check: checkAndDownloadUpdate,
+      onState: setUpdateState,
+      onUpdateReady: (update) => {
+        downloadedUpdateRef.current = update
+      },
+    })
   }, [])
 
   useEffect(() => {
@@ -349,6 +392,7 @@ export default function App() {
     ;(async () => {
       if (!currentProject) {
         setProjectName(null)
+        setLensKits([])
         return
       }
       try {
@@ -374,14 +418,17 @@ export default function App() {
 
   async function openInitializedProject(path: string): Promise<boolean> {
     try {
-      const [files, folders] = await Promise.all([
+      await startControl(path)
+      const [files, folders, kits] = await Promise.all([
         listProjectViews(path),
         listProjectFolders(path),
+        listLensKits(path),
       ])
       openProject(path, files)
       setViewPanes([createEmptyPane('pane-1')])
       setActivePaneId('pane-1')
       setFolderList(folders)
+      setLensKits(kits)
       setSelectedFolder('')
       await saveLastProject(path)
       return true
@@ -394,6 +441,42 @@ export default function App() {
       return false
     }
   }
+
+  useEffect(() => {
+    setControlContext(currentProject, activeTab).catch(() => {})
+  }, [currentProject, activeTab])
+
+  useEffect(() => {
+    if (!currentProject) return
+    let unsub: (() => void) | null = null
+    let cancelled = false
+
+    ;(async () => {
+      unsub = await onControlViewChanged(async ({ viewPath }) => {
+        if (cancelled) return
+        try {
+          const [files, folders, kits] = await Promise.all([
+            listProjectViews(currentProject),
+            listProjectFolders(currentProject),
+            listLensKits(currentProject),
+          ])
+          refreshViewList(files)
+          setFolderList(folders)
+          setLensKits(kits)
+          setViewReloadKey((key) => key + 1)
+          if (files.includes(viewPath)) handleOpenView(viewPath)
+        } catch (err) {
+          console.error('control view refresh failed:', err)
+        }
+      })
+    })().catch((err) => console.error('control listener failed:', err))
+
+    return () => {
+      cancelled = true
+      unsub?.()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentProject])
 
   async function tryOpenProjectAt(path: string): Promise<boolean> {
     try {
@@ -496,7 +579,11 @@ export default function App() {
       i += 1
     }
     try {
-      await writeViewGraph(currentProject, name, emptyGraph())
+      await writeViewText(
+        currentProject,
+        name,
+        JSON.stringify(createA2UIViewDocument(displayViewName(name)), null, 2),
+      )
       const [files, folders] = await Promise.all([
         listProjectViews(currentProject),
         listProjectFolders(currentProject),
@@ -704,9 +791,9 @@ export default function App() {
 
   function handleGraphReady(graph: A2UIGraph) {
     if (!activeTab || !currentProject || !activeTab.toLowerCase().endsWith('.a2ui.json')) return
-    canvas.setGraph(activeTab, graph)
-    writeViewGraph(currentProject, activeTab, graph).catch((err) =>
-      console.error('writeViewGraph failed:', err),
+    const document = legacyGraphToViewDocument(graph, displayViewName(activeTab))
+    writeViewText(currentProject, activeTab, JSON.stringify(document, null, 2)).catch((err) =>
+      console.error('writeViewText failed:', err),
     )
   }
 
@@ -882,6 +969,7 @@ export default function App() {
           <SettingsDialog
             appInfo={appInfo}
             updateState={updateState}
+            lensKits={lensKits}
             onClose={() => setSettingsOpen(false)}
             onRestartToUpdate={handleRestartToUpdate}
             onOpenInspector={handleOpenInspector}
@@ -915,6 +1003,7 @@ export default function App() {
         <SettingsDialog
           appInfo={appInfo}
           updateState={updateState}
+          lensKits={lensKits}
           onClose={() => setSettingsOpen(false)}
           onRestartToUpdate={handleRestartToUpdate}
           onOpenInspector={handleOpenInspector}
@@ -991,10 +1080,11 @@ export default function App() {
                       handleReorderPaneTab(pane.id, draggedFilename, targetFilename)}
                   />
                   <div className="viewer-body">
-                    <ViewPaneContent
-                      projectPath={currentProject}
-                      filename={pane.activeTab}
-                    />
+                      <ViewPaneContent
+                        projectPath={currentProject}
+                        filename={pane.activeTab}
+                        reloadKey={viewReloadKey}
+                      />
                   </div>
                 </section>
               ))}
@@ -1045,6 +1135,7 @@ export default function App() {
                     <TerminalPanel
                       projectPath={currentProject}
                       profile={session.profileId}
+                      activeView={activeTab}
                       paneKey={`${currentProject}:${session.id}`}
                       onGraphReady={handleGraphReady}
                     />

@@ -13,6 +13,9 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use crate::a2ui::parse_a2ui_block;
+use crate::control::{
+    ensure_project_layout, socket_path as control_socket_path, store_path as control_store_path,
+};
 use crate::term::prompts::SYSTEM_PROMPT;
 
 const TAIL_CAP: usize = 256 * 1024;
@@ -134,7 +137,23 @@ fn apply_common_env(cmd: &mut CommandBuilder) {
     }
 }
 
-fn command_for_profile(profile: TerminalProfileId) -> CommandBuilder {
+fn apply_delineation_env(cmd: &mut CommandBuilder, project_path: &str, active_view: Option<&str>) {
+    let _ = ensure_project_layout(project_path);
+    cmd.env("DELINEATION_PROJECT_PATH", project_path);
+    cmd.env(
+        "DELINEATION_STORE_PATH",
+        control_store_path(project_path).to_string_lossy().to_string(),
+    );
+    cmd.env(
+        "DELINEATION_SOCKET",
+        control_socket_path(project_path).to_string_lossy().to_string(),
+    );
+    if let Some(active_view) = active_view {
+        cmd.env("DELINEATION_ACTIVE_VIEW", active_view);
+    }
+}
+
+fn command_for_profile(profile: TerminalProfileId, project_path: &str) -> CommandBuilder {
     match profile {
         TerminalProfileId::Shell => CommandBuilder::new(default_shell()),
         TerminalProfileId::Claude => {
@@ -143,7 +162,14 @@ fn command_for_profile(profile: TerminalProfileId) -> CommandBuilder {
             cmd.arg(SYSTEM_PROMPT);
             cmd
         }
-        TerminalProfileId::Codex => CommandBuilder::new("codex"),
+        TerminalProfileId::Codex => {
+            let mut cmd = CommandBuilder::new("codex");
+            let codex_path = project_path.to_string() + "/.delineation/lenskits/system/operator/CODEX.md";
+            cmd.arg(format!(
+                "Read {codex_path} for Delineation operator instructions, then wait for my next request."
+            ));
+            cmd
+        }
     }
 }
 
@@ -151,6 +177,7 @@ pub async fn spawn(
     app: AppHandle,
     project_path: String,
     profile: TerminalProfileId,
+    active_view: Option<String>,
     cols: u16,
     rows: u16,
 ) -> Result<String> {
@@ -170,9 +197,11 @@ pub async fn spawn(
         })
         .map_err(|e| anyhow!("openpty failed: {e}"))?;
 
-    let mut cmd = command_for_profile(profile);
+    let _ = ensure_project_layout(&project_path);
+    let mut cmd = command_for_profile(profile, &project_path);
     cmd.cwd(&project_path);
     apply_common_env(&mut cmd);
+    apply_delineation_env(&mut cmd, &project_path, active_view.as_deref());
 
     let child = pair
         .slave
