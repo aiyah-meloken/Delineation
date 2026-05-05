@@ -148,7 +148,11 @@ fn title_to_filename(title: &str) -> String {
         .collect::<String>()
         .trim_matches('-')
         .to_string();
-    let stem = if stem.is_empty() { "untitled".to_string() } else { stem };
+    let stem = if stem.is_empty() {
+        "untitled".to_string()
+    } else {
+        stem
+    };
     format!("{stem}.a2ui.json")
 }
 
@@ -503,6 +507,10 @@ def main():
     update.add_argument("--messages-file", required=True)
     update.add_argument("--facts-file")
 
+    set_status = sub.add_parser("set-status")
+    set_status.add_argument("--view-path", required=True)
+    set_status.add_argument("--status", choices=["draft", "reviewed", "confirmed"], required=True)
+
     args = parser.parse_args()
     if args.cmd == "context":
         print(json.dumps(rpc("workbench.context.get"), ensure_ascii=False, indent=2))
@@ -536,6 +544,8 @@ def main():
         if args.facts_file:
             params["facts"] = load_json(args.facts_file)
         print(json.dumps(rpc("view.updateA2UI", params), ensure_ascii=False, indent=2))
+    elif args.cmd == "set-status":
+        print(json.dumps(rpc("view.updateStatus", {"viewPath": args.view_path, "status": args.status}), ensure_ascii=False, indent=2))
 
 
 if __name__ == "__main__":
@@ -586,6 +596,7 @@ python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py
 python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py" focus-window
 python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py" create-view --title "Subscription Flow" --messages-file /tmp/subscription-flow.a2ui.json --facts-file /tmp/subscription-flow.facts.json
 python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py" update-view --view-path "subscription-flow.a2ui.json" --messages-file /tmp/subscription-flow.a2ui.json --facts-file /tmp/subscription-flow.facts.json
+python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py" set-status --view-path "subscription-flow.a2ui.json" --status reviewed
 python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py" open-view --view-path "subscription-flow.a2ui.json"
 python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py" versions --view-path "subscription-flow.a2ui.json"
 python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py" get-version --view-path "subscription-flow.a2ui.json" --version-id "..."
@@ -743,7 +754,14 @@ pub async fn handle_json_rpc_line(app: &AppHandle, project_path: &str, line: &st
         return json_rpc_error(id, -32600, "Invalid Request: missing method");
     };
 
-    match dispatch(app, project_path, method, parsed.params.unwrap_or_else(|| json!({}))).await {
+    match dispatch(
+        app,
+        project_path,
+        method,
+        parsed.params.unwrap_or_else(|| json!({})),
+    )
+    .await
+    {
         Ok(result) => json!({ "jsonrpc": "2.0", "id": id, "result": result }),
         Err(err) => json_rpc_error(id, -32000, err.to_string()),
     }
@@ -777,6 +795,9 @@ async fn handle_json_rpc_line_without_app(project_path: &str, line: &str) -> Val
         }
         "view.create" => view_create_core(project_path, params).map(|(result, _)| result),
         "view.updateA2UI" => view_update_a2ui_core(project_path, params).map(|(result, _)| result),
+        "view.updateStatus" => {
+            view_update_status_core(project_path, params).map(|(result, _)| result)
+        }
         "view.version.list" => version_list(project_path, params),
         "view.version.get" => version_get(project_path, params),
         _ => Err(anyhow!("Unknown method: {method}")),
@@ -796,13 +817,19 @@ fn json_rpc_error(id: Option<Value>, code: i32, message: impl Into<String>) -> V
     })
 }
 
-async fn dispatch(app: &AppHandle, project_path: &str, method: &str, params: Value) -> Result<Value> {
+async fn dispatch(
+    app: &AppHandle,
+    project_path: &str,
+    method: &str,
+    params: Value,
+) -> Result<Value> {
     match method {
         "workbench.context.get" => Ok(serde_json::to_value(get_context(app, project_path).await)?),
         "workbench.window.open" | "workbench.window.focus" => workbench_window_focus(app),
         "lenskit.list" => Ok(serde_json::to_value(discover_lenskits(project_path)?)?),
         "view.create" => view_create(app, project_path, params).await,
         "view.updateA2UI" => view_update_a2ui(app, project_path, params).await,
+        "view.updateStatus" => view_update_status(app, project_path, params).await,
         "view.open" | "view.focus" => view_open(app, project_path, params).await,
         "view.version.list" => version_list(project_path, params),
         "view.version.get" => version_get(project_path, params),
@@ -841,7 +868,10 @@ fn a2ui_document(
 
 async fn view_create(app: &AppHandle, project_path: &str, params: Value) -> Result<Value> {
     let (result, view_path) = view_create_core(project_path, params)?;
-    app.emit("control://view-changed", json!({ "action": "create", "viewPath": view_path }))?;
+    app.emit(
+        "control://view-changed",
+        json!({ "action": "create", "viewPath": view_path }),
+    )?;
     Ok(result)
 }
 
@@ -902,7 +932,10 @@ fn view_create_core(project_path: &str, params: Value) -> Result<(Value, String)
 
 async fn view_update_a2ui(app: &AppHandle, project_path: &str, params: Value) -> Result<Value> {
     let (result, view_path) = view_update_a2ui_core(project_path, params)?;
-    app.emit("control://view-changed", json!({ "action": "update", "viewPath": view_path }))?;
+    app.emit(
+        "control://view-changed",
+        json!({ "action": "update", "viewPath": view_path }),
+    )?;
     Ok(result)
 }
 
@@ -956,6 +989,61 @@ fn view_update_a2ui_core(project_path: &str, params: Value) -> Result<(Value, St
     Ok((result, view_path))
 }
 
+async fn view_update_status(app: &AppHandle, project_path: &str, params: Value) -> Result<Value> {
+    let (result, view_path) = view_update_status_core(project_path, params)?;
+    app.emit(
+        "control://view-changed",
+        json!({ "action": "update", "viewPath": view_path }),
+    )?;
+    Ok(result)
+}
+
+fn view_update_status_core(project_path: &str, params: Value) -> Result<(Value, String)> {
+    let view_path = normalize_view_path(
+        params
+            .get("viewPath")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("viewPath is required"))?,
+    )?;
+    let status = params
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("status is required"))?;
+    validate_status(status)?;
+
+    let full = views_path(project_path).join(&view_path);
+    if !full.exists() {
+        return Err(anyhow!("View does not exist: {view_path}"));
+    }
+    let snapshot = snapshot_version(project_path, &view_path, &full)?;
+    let existing =
+        read_json_if_exists(&full).ok_or_else(|| anyhow!("View is not valid JSON: {view_path}"))?;
+
+    let title = existing
+        .get("title")
+        .and_then(Value::as_str)
+        .unwrap_or("Untitled");
+    let messages = existing
+        .get("a2uiMessages")
+        .cloned()
+        .ok_or_else(|| anyhow!("View is missing a2uiMessages: {view_path}"))?;
+    validate_a2ui_messages(&messages)?;
+    let facts = existing.get("facts").cloned().unwrap_or_else(|| json!([]));
+    validate_facts(&facts)?;
+    let mut versions = existing
+        .get("versions")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    versions.insert(0, serde_json::to_value(&snapshot)?);
+
+    let doc = a2ui_document(title, status, messages, facts, Value::Array(versions));
+    write_json_file(&full, &doc)?;
+
+    let result = json!({ "viewPath": view_path, "title": title, "status": status });
+    Ok((result, view_path))
+}
+
 async fn view_open(app: &AppHandle, _project_path: &str, params: Value) -> Result<Value> {
     let view_path = normalize_view_path(
         params
@@ -963,7 +1051,10 @@ async fn view_open(app: &AppHandle, _project_path: &str, params: Value) -> Resul
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow!("viewPath is required"))?,
     )?;
-    app.emit("control://view-changed", json!({ "action": "open", "viewPath": view_path }))?;
+    app.emit(
+        "control://view-changed",
+        json!({ "action": "open", "viewPath": view_path }),
+    )?;
     Ok(json!({ "viewPath": view_path }))
 }
 
@@ -972,7 +1063,11 @@ fn read_json_if_exists(path: &Path) -> Option<Value> {
     serde_json::from_str(&text).ok()
 }
 
-fn snapshot_version(project_path: &str, view_path: &str, full_path: &Path) -> Result<ViewVersionInfo> {
+fn snapshot_version(
+    project_path: &str,
+    view_path: &str,
+    full_path: &Path,
+) -> Result<ViewVersionInfo> {
     let text = fs::read_to_string(full_path)?;
     if text.trim().is_empty() {
         return Err(anyhow!("cannot snapshot empty view"));
@@ -1032,7 +1127,10 @@ fn version_list(project_path: &str, params: Value) -> Result<Value> {
         .get("viewPath")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("viewPath is required"))?;
-    Ok(serde_json::to_value(list_versions_for_view(project_path, view_path)?)?)
+    Ok(serde_json::to_value(list_versions_for_view(
+        project_path,
+        view_path,
+    )?)?)
 }
 
 fn version_get(project_path: &str, params: Value) -> Result<Value> {
@@ -1060,7 +1158,8 @@ mod tests {
     use tokio::net::{UnixListener, UnixStream};
 
     fn temp_project(name: &str) -> PathBuf {
-        let base = std::env::temp_dir().join(format!("delineation-control-test-{name}-{}", version_id()));
+        let base =
+            std::env::temp_dir().join(format!("delineation-control-test-{name}-{}", version_id()));
         fs::create_dir_all(&base).unwrap();
         base
     }
@@ -1089,6 +1188,8 @@ mod tests {
         .unwrap();
         assert!(helper.contains("open-view"));
         assert!(helper.contains("get-version"));
+        assert!(helper.contains("set-status"));
+        assert!(helper.contains("view.updateStatus"));
     }
 
     #[test]
@@ -1104,12 +1205,17 @@ mod tests {
         assert!(kits[0].has_renderer);
         assert!(kits[0].has_watcher);
         assert!(kits[0].operator_files.contains(&"CODEX.md".to_string()));
-        assert!(kits[0].operator_files.contains(&"delineation_control.py".to_string()));
+        assert!(kits[0]
+            .operator_files
+            .contains(&"delineation_control.py".to_string()));
     }
 
     #[test]
     fn normalize_view_path_adds_extension_and_rejects_parent_segments() {
-        assert_eq!(normalize_view_path("flows/signup").unwrap(), "flows/signup.a2ui.json");
+        assert_eq!(
+            normalize_view_path("flows/signup").unwrap(),
+            "flows/signup.a2ui.json"
+        );
         assert!(normalize_view_path("../secret").is_err());
     }
 
@@ -1138,10 +1244,12 @@ mod tests {
         ]))
         .is_ok());
 
-        assert!(validate_facts(&json!([{ "id": "fact-1", "label": "Missing source" }]))
-            .unwrap_err()
-            .to_string()
-            .contains("source"));
+        assert!(
+            validate_facts(&json!([{ "id": "fact-1", "label": "Missing source" }]))
+                .unwrap_err()
+                .to_string()
+                .contains("source")
+        );
         assert!(validate_facts(&json!({ "id": "not-an-array" }))
             .unwrap_err()
             .to_string()
@@ -1154,6 +1262,49 @@ mod tests {
         assert!(validate_status("reviewed").is_ok());
         assert!(validate_status("confirmed").is_ok());
         assert!(validate_status("locked").is_err());
+    }
+
+    #[tokio::test]
+    async fn json_rpc_updates_view_status_without_resending_a2ui() {
+        let project = temp_project("status-update");
+        let project_path = project.to_str().unwrap().to_string();
+        ensure_project_layout(&project_path).unwrap();
+        view_create_core(
+            &project_path,
+            json!({
+                "title": "Subscription Flow",
+                "status": "draft",
+                "a2uiMessages": default_a2ui_messages("Subscription Flow")
+            }),
+        )
+        .unwrap();
+
+        let update_status = json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "view.updateStatus",
+            "params": {
+                "viewPath": "subscription-flow.a2ui.json",
+                "status": "confirmed"
+            }
+        });
+        let response =
+            handle_json_rpc_line_without_app(&project_path, &update_status.to_string()).await;
+
+        assert_eq!(
+            response["result"]["status"],
+            Value::String("confirmed".to_string())
+        );
+        let view_file = views_path(&project_path).join("subscription-flow.a2ui.json");
+        let doc: Value = serde_json::from_str(&fs::read_to_string(view_file).unwrap()).unwrap();
+        assert_eq!(doc["status"], Value::String("confirmed".to_string()));
+        assert_eq!(doc["a2uiMessages"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            list_versions_for_view(&project_path, "subscription-flow.a2ui.json")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     #[test]
@@ -1188,7 +1339,10 @@ mod tests {
             let mut lines = BufReader::new(read).lines();
             while let Some(line) = lines.next_line().await.unwrap() {
                 let response = handle_json_rpc_line_without_app(&server_project, &line).await;
-                write.write_all(response.to_string().as_bytes()).await.unwrap();
+                write
+                    .write_all(response.to_string().as_bytes())
+                    .await
+                    .unwrap();
                 write.write_all(b"\n").await.unwrap();
             }
         });
@@ -1203,7 +1357,10 @@ mod tests {
             "method": "view.create",
             "params": { "title": "Subscription Flow" }
         });
-        write.write_all(create.to_string().as_bytes()).await.unwrap();
+        write
+            .write_all(create.to_string().as_bytes())
+            .await
+            .unwrap();
         write.write_all(b"\n").await.unwrap();
         let create_response: Value =
             serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
@@ -1221,7 +1378,10 @@ mod tests {
                 "a2uiMessages": default_a2ui_messages("Updated Subscription Flow")
             }
         });
-        write.write_all(update.to_string().as_bytes()).await.unwrap();
+        write
+            .write_all(update.to_string().as_bytes())
+            .await
+            .unwrap();
         write.write_all(b"\n").await.unwrap();
         let update_response: Value =
             serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
@@ -1236,7 +1396,10 @@ mod tests {
             "method": "view.version.list",
             "params": { "viewPath": "subscription-flow.a2ui.json" }
         });
-        write.write_all(versions.to_string().as_bytes()).await.unwrap();
+        write
+            .write_all(versions.to_string().as_bytes())
+            .await
+            .unwrap();
         write.write_all(b"\n").await.unwrap();
         let versions_response: Value =
             serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
@@ -1248,11 +1411,17 @@ mod tests {
             "method": "lenskit.list",
             "params": {}
         });
-        write.write_all(lenskits.to_string().as_bytes()).await.unwrap();
+        write
+            .write_all(lenskits.to_string().as_bytes())
+            .await
+            .unwrap();
         write.write_all(b"\n").await.unwrap();
         let lenskits_response: Value =
             serde_json::from_str(&lines.next_line().await.unwrap().unwrap()).unwrap();
-        assert_eq!(lenskits_response["result"][0]["id"], Value::String("system".to_string()));
+        assert_eq!(
+            lenskits_response["result"][0]["id"],
+            Value::String("system".to_string())
+        );
 
         let focus = json!({
             "jsonrpc": "2.0",
