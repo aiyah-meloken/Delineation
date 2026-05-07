@@ -205,17 +205,23 @@ pub(crate) fn apply_delineation_env(cmd: &mut CommandBuilder, project_path: &str
     }
 }
 
+fn executable_or_name(name: &str) -> String {
+    find_executable(name)
+        .map(|path| path.to_string_lossy().to_string())
+        .unwrap_or_else(|| name.to_string())
+}
+
 pub(crate) fn command_for_profile(profile: TerminalProfileId, project_path: &str) -> CommandBuilder {
     match profile {
         TerminalProfileId::Shell => CommandBuilder::new(default_shell()),
         TerminalProfileId::Claude => {
-            let mut cmd = CommandBuilder::new("claude");
+            let mut cmd = CommandBuilder::new(executable_or_name("claude"));
             cmd.arg("--append-system-prompt");
             cmd.arg(SYSTEM_PROMPT);
             cmd
         }
         TerminalProfileId::Codex => {
-            let mut cmd = CommandBuilder::new("codex");
+            let mut cmd = CommandBuilder::new(executable_or_name("codex"));
             let codex_path = project_path.to_string() + "/.delineation/lenskits/system/operator/CODEX.md";
             cmd.arg(format!(
                 "Read {codex_path} for Delineation operator instructions, then wait for my next request."

@@ -169,8 +169,15 @@ pub fn socket_path(project_path: &str) -> PathBuf {
 }
 
 pub async fn ensure_running(project_path: &str) -> Result<()> {
-    if daemon_rpc(project_path, "daemon.ping", json!({})).await.is_ok() {
-        return Ok(());
+    if let Ok(ping) = daemon_rpc(project_path, "daemon.ping", json!({})).await {
+        if ping.get("version").and_then(Value::as_str) == Some(env!("CARGO_PKG_VERSION")) {
+            return Ok(());
+        }
+        eprintln!(
+            "delineation daemon version mismatch: running={}, app={}; restarting daemon socket",
+            ping.get("version").and_then(Value::as_str).unwrap_or("unknown"),
+            env!("CARGO_PKG_VERSION"),
+        );
     }
 
     let socket = socket_path(project_path);
@@ -644,7 +651,13 @@ async fn handle_attach(
         .await;
     }
 
-    let session = ensure_session(Arc::clone(&state), params).await?;
+    let session = match ensure_session(Arc::clone(&state), params).await {
+        Ok(session) => session,
+        Err(err) => {
+            let mut stream = reader.into_inner();
+            return write_rpc_result(&mut stream, id, Err(err)).await;
+        }
+    };
     let (tx, mut rx) = mpsc::unbounded_channel::<DaemonEvent>();
     let replay_tx = tx.clone();
     {
@@ -685,7 +698,7 @@ async fn handle_attach(
 
 async fn dispatch_request(state: Arc<DaemonState>, request: RpcRequest) -> Result<Value> {
     match request.method.as_str() {
-        "daemon.ping" => Ok(json!({ "ok": true })),
+        "daemon.ping" => Ok(json!({ "ok": true, "version": env!("CARGO_PKG_VERSION") })),
         "workbench.context.set" => {
             let active_view = request
                 .params
