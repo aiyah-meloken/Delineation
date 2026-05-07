@@ -563,30 +563,44 @@ if __name__ == "__main__":
         codex_path,
         r#"# Delineation Operator Skill
 
-You are running inside Delineation's Terminal.
+You are running inside Delineation's Terminal. Delineation is not a chatbox; it is a workbench for creating durable, reviewable software-understanding Views.
 
-This LensKit is the built-in Operator package for turning code analysis into renderable A2UI Views.
+This built-in Operator LensKit tells you how to cooperate with Delineation when the user asks you to understand code, explain architecture, draw a flow, create a View, update a View, or turn terminal analysis into a persistent artifact.
 
-Use it when the user asks questions like:
-- "用户订阅流程是什么"
-- "draw/render/show the flow"
-- "create a View"
-- "analyze this code path"
+## Delineation Operating Loop
 
-Environment:
+1. Get context.
+   - Run `context` before creating or updating a View.
+   - Notice `DELINEATION_ACTIVE_VIEW`; update it when the user is clearly refining the current View.
+2. Inspect the real project.
+   - Use normal terminal tools such as `rg`, `find`, package scripts, tests, and source reads.
+   - Prefer primary code evidence over guesses.
+3. Decide the View shape.
+   - Choose a human-readable structure for the user's question: flow, module map, data model, lifecycle, checklist, risk review, or concise prose.
+   - Keep the View focused. One View should answer one architectural question well.
+4. Create A2UI v0.9 messages.
+   - Use the basic catalog only.
+   - Keep component ids stable and semantic enough for future diff anchors.
+5. Attach facts.
+   - Use facts for every non-obvious claim.
+   - A fact should point to a file, function, schema, command, or other inspectable source.
+6. Persist through Delineation.
+   - Do not answer only in chat when the user asked for a View, diagram, architecture explanation, codebase understanding, or project orientation.
+   - Use `create-view` for new understanding and `update-view` for refinement.
+7. Open or focus the View.
+   - Make the Workbench show the artifact so the user can review it.
+8. Report briefly.
+   - Tell the user what View changed and what evidence it is based on.
+
+## Environment
+
 - `DELINEATION_PROJECT_PATH`: current Project root.
 - `DELINEATION_STORE_PATH`: `.delineation` store path.
 - `DELINEATION_SOCKET`: newline-delimited JSON-RPC socket.
 - `DELINEATION_ACTIVE_VIEW`: current View path, if one is active.
 
-Workflow:
-1. Inspect the code using normal terminal tools.
-2. Produce A2UI v0.9 messages using the basic catalog.
-3. Save those messages to a temporary JSON file.
-4. Call `operator/delineation_control.py create-view` or `update-view`.
-5. Tell the user which View was created or updated.
+## Helper Commands
 
-Helper:
 ```bash
 python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py" context
 python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py" lenskits
@@ -599,7 +613,38 @@ python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py
 python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py" get-version --view-path "subscription-flow.a2ui.json" --version-id "..."
 ```
 
-Message shape:
+## When To Create vs Update
+
+Create a new View when:
+- The user asks a new architectural question.
+- The current active View is unrelated.
+- The result deserves its own review surface.
+
+Update the active View when:
+- The user is refining, correcting, expanding, or asking for a clearer version of the same topic.
+- `DELINEATION_ACTIVE_VIEW` is set and matches the request.
+- You are incorporating new evidence into the same understanding.
+
+Set status:
+- `draft`: initial or uncertain analysis.
+- `reviewed`: you inspected the code and facts are sufficient for human review.
+- `confirmed`: only when the user explicitly confirms the View.
+
+## Review-ready View checklist
+
+Before calling `create-view` or `update-view`, check:
+
+- The title states the architectural subject, not a generic label.
+- The first screen explains the answer in one or two concise paragraphs.
+- The structure supports review: sections, cards, lists, or tabs are grouped by meaning.
+- Every non-obvious claim has a corresponding fact.
+- Facts use inspectable sources such as `src/file.ts:functionName`, `schema/table.sql`, or `command:npm test`.
+- The View does not contain filler such as "maybe", "likely", or ungrounded speculation unless explicitly marked as an open question.
+- The A2UI JSON validates against the basic catalog rules below.
+- The final answer in chat is short; the durable artifact lives in Delineation.
+
+## A2UI Message Shape
+
 Save an array of A2UI v0.9 messages. The Workbench renderer uses:
 `https://a2ui.org/specification/v0_9/basic_catalog.json`
 
@@ -608,6 +653,8 @@ Important basic catalog rules:
 - `Card` uses exactly one `child: "child-id"`. If a card needs a title and body, create a `Column` component and set the card's `child` to that Column. Do not put `children` directly on `Card`.
 - `Tabs` uses `tabs: [{ "title": "...", "child": "child-id" }]`.
 - Every referenced child id must exist in the same View.
+- Text should be evidence-oriented and readable. Avoid dumping raw code into large Text components.
+- Prefer 6-12 meaningful blocks over one huge paragraph.
 
 ```json
 [
@@ -639,16 +686,72 @@ Important basic catalog rules:
 ]
 ```
 
-Keep Views readable: use concise headings, evidence-oriented text, and no more than about 15-20 major steps.
+## Recommended View Patterns
 
-Facts shape:
+Use these structures unless the user's request suggests something better:
+
+- Flow question: `Column` with title, summary, `Row` or ordered Text steps, risks/open questions, facts.
+- Module map: title, boundary summary, cards per module, dependency notes, facts.
+- Data model: title, tables/entities, important fields, relationships, invariants, facts.
+- Agent/workflow analysis: title, actor loop, tool/control boundary, failure modes, facts.
+- Architecture review: title, what changed, impacted Views/Facts, risks, recommended follow-up.
+
+## Facts Shape
+
 ```json
 [
   { "id": "fact-1", "label": "Subscription entry point", "source": "src/path/file.ts:functionName" }
 ]
 ```
 
-Use facts for code evidence that a human or future Agent can inspect later. A View without facts is allowed only for a first draft.
+Fact quality rules:
+- Use facts for code evidence that a human or future Agent can inspect later.
+- Prefer specific paths and symbols over broad directories.
+- If evidence comes from a command, use `command:<command>` as the source and put the important result in the label.
+- A View without facts is allowed only for a first draft, and should stay `draft`.
+
+## Minimal End-to-End Example
+
+```bash
+cat > /tmp/subscription-flow.a2ui.json <<'JSON'
+[
+  {
+    "version": "v0.9",
+    "createSurface": {
+      "surfaceId": "main",
+      "catalogId": "https://a2ui.org/specification/v0_9/basic_catalog.json"
+    }
+  },
+  {
+    "version": "v0.9",
+    "updateComponents": {
+      "surfaceId": "main",
+      "components": [
+        { "id": "root", "component": "Column", "children": ["title", "summary", "flow"] },
+        { "id": "title", "component": "Text", "variant": "h1", "text": "User Subscription Flow" },
+        { "id": "summary", "component": "Text", "text": "A concise explanation grounded in inspected code." },
+        { "id": "flow", "component": "List", "children": ["step-1", "step-2"] },
+        { "id": "step-1", "component": "Text", "text": "1. User starts checkout from the billing UI." },
+        { "id": "step-2", "component": "Text", "text": "2. Backend validates plan and writes subscription state." }
+      ]
+    }
+  }
+]
+JSON
+
+cat > /tmp/subscription-flow.facts.json <<'JSON'
+[
+  { "id": "fact-checkout-ui", "label": "Checkout action is initiated from billing UI", "source": "src/billing/CheckoutButton.tsx" },
+  { "id": "fact-subscription-api", "label": "Subscription state is written by backend handler", "source": "src/api/subscriptions.ts:createSubscription" }
+]
+JSON
+
+python3 "$DELINEATION_STORE_PATH/lenskits/system/operator/delineation_control.py" create-view \
+  --title "User Subscription Flow" \
+  --status reviewed \
+  --messages-file /tmp/subscription-flow.a2ui.json \
+  --facts-file /tmp/subscription-flow.facts.json
+```
 "#,
     )?;
     Ok(())
@@ -1103,6 +1206,11 @@ mod tests {
         assert!(helper.contains("get-version"));
         assert!(helper.contains("set-status"));
         assert!(helper.contains("view.updateStatus"));
+        let codex = fs::read_to_string(codex_lenskit_path(project.to_str().unwrap())).unwrap();
+        assert!(codex.contains("Delineation Operating Loop"));
+        assert!(codex.contains("Do not answer only in chat"));
+        assert!(codex.contains("Use facts for every non-obvious claim"));
+        assert!(codex.contains("Review-ready View checklist"));
     }
 
     #[test]

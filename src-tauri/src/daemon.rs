@@ -26,6 +26,7 @@ use crate::term::session::{
 };
 
 const SOCKET_FILE: &str = ".delineation/runtime/daemon.sock";
+const TERMINAL_HISTORY_CAP: usize = 2 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize)]
 pub struct DaemonTerminalSession {
@@ -51,6 +52,7 @@ struct DaemonSession {
     writer: Arc<StdMutex<Box<dyn std::io::Write + Send>>>,
     child: Arc<StdMutex<Box<dyn portable_pty::Child + Send + Sync>>>,
     subscribers: Arc<StdMutex<Vec<mpsc::UnboundedSender<DaemonEvent>>>>,
+    history: Arc<TerminalHistory>,
 }
 
 struct DaemonState {
@@ -120,6 +122,46 @@ struct ResizeParams {
     session_id: String,
     cols: u16,
     rows: u16,
+}
+
+#[derive(Debug)]
+struct TerminalHistory {
+    cap: usize,
+    bytes: StdMutex<Vec<u8>>,
+}
+
+impl TerminalHistory {
+    fn new(cap: usize) -> Self {
+        Self {
+            cap,
+            bytes: StdMutex::new(Vec::with_capacity(cap.min(64 * 1024))),
+        }
+    }
+
+    fn append(&self, chunk: &[u8]) {
+        if self.cap == 0 || chunk.is_empty() {
+            return;
+        }
+        if let Ok(mut bytes) = self.bytes.lock() {
+            if chunk.len() >= self.cap {
+                bytes.clear();
+                bytes.extend_from_slice(&chunk[chunk.len() - self.cap..]);
+                return;
+            }
+            bytes.extend_from_slice(chunk);
+            if bytes.len() > self.cap {
+                let overflow = bytes.len() - self.cap;
+                bytes.drain(..overflow);
+            }
+        }
+    }
+
+    fn snapshot(&self) -> Vec<u8> {
+        self.bytes
+            .lock()
+            .map(|bytes| bytes.clone())
+            .unwrap_or_default()
+    }
 }
 
 pub fn socket_path(project_path: &str) -> PathBuf {
@@ -604,12 +646,20 @@ async fn handle_attach(
 
     let session = ensure_session(Arc::clone(&state), params).await?;
     let (tx, mut rx) = mpsc::unbounded_channel::<DaemonEvent>();
+    let replay_tx = tx.clone();
     {
         let mut subscribers = session
             .subscribers
             .lock()
             .map_err(|e| anyhow!("subscriber lock poisoned: {e}"))?;
         subscribers.push(tx);
+    }
+    let replay = session.history.snapshot();
+    if !replay.is_empty() {
+        let _ = replay_tx.send(DaemonEvent::Data {
+            session_id: session.id.clone(),
+            bytes_b64: B64.encode(replay),
+        });
     }
 
     let mut stream = reader.into_inner();
@@ -816,6 +866,7 @@ fn spawn_session(state: Arc<DaemonState>, params: AttachParams) -> Result<Arc<Da
 
     let reader = pair.master.try_clone_reader()?;
     let writer = pair.master.take_writer()?;
+    let history = Arc::new(TerminalHistory::new(TERMINAL_HISTORY_CAP));
     let session = Arc::new(DaemonSession {
         id: params.session_id.clone(),
         title: profile_title(&params.profile),
@@ -824,6 +875,7 @@ fn spawn_session(state: Arc<DaemonState>, params: AttachParams) -> Result<Arc<Da
         writer: Arc::new(StdMutex::new(writer)),
         child: Arc::new(StdMutex::new(child)),
         subscribers: Arc::new(StdMutex::new(Vec::new())),
+        history: Arc::clone(&history),
     });
 
     start_reader_thread(
@@ -831,6 +883,7 @@ fn spawn_session(state: Arc<DaemonState>, params: AttachParams) -> Result<Arc<Da
         session.id.clone(),
         Arc::clone(&session.child),
         Arc::clone(&session.subscribers),
+        history,
         reader,
     );
 
@@ -842,6 +895,7 @@ fn start_reader_thread(
     session_id: String,
     child: Arc<StdMutex<Box<dyn portable_pty::Child + Send + Sync>>>,
     subscribers: Arc<StdMutex<Vec<mpsc::UnboundedSender<DaemonEvent>>>>,
+    history: Arc<TerminalHistory>,
     mut reader: Box<dyn std::io::Read + Send>,
 ) {
     let runtime = tokio::runtime::Handle::current();
@@ -876,6 +930,7 @@ fn start_reader_thread(
                 }
                 Ok(n) => {
                     let chunk = &buf[..n];
+                    history.append(chunk);
                     broadcast(
                         &subscribers,
                         DaemonEvent::Data {
@@ -934,6 +989,21 @@ fn broadcast(
 ) {
     if let Ok(mut subscribers) = subscribers.lock() {
         subscribers.retain(|subscriber| subscriber.send(event.clone()).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terminal_history_keeps_recent_bytes_with_byte_cap() {
+        let history = TerminalHistory::new(10);
+
+        history.append(b"hello");
+        history.append(b" world");
+
+        assert_eq!(history.snapshot(), b"ello world");
     }
 }
 
