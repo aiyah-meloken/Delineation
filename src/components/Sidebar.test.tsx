@@ -21,6 +21,7 @@ function renderSidebar(overrides: Partial<Parameters<typeof Sidebar>[0]> = {}) {
     onMoveView: vi.fn(),
     onNewCanvas: vi.fn(),
     onOpenSettings: vi.fn(),
+    onRestartToUpdate: vi.fn(),
     updateReady: false,
     ...overrides,
   }
@@ -45,6 +46,16 @@ describe('Sidebar project actions', () => {
 
     expect(props.onNewProject).toHaveBeenCalledTimes(1)
     expect(props.onOpenProject).toHaveBeenCalledTimes(1)
+  })
+
+  it('restarts directly from update buttons when an update is ready', () => {
+    const { props } = renderSidebar({ updateReady: true })
+
+    fireEvent.click(screen.getByRole('button', { name: /restart to update/i }))
+    fireEvent.click(screen.getByRole('button', { name: /restart and install update/i }))
+
+    expect(props.onRestartToUpdate).toHaveBeenCalledTimes(2)
+    expect(props.onOpenSettings).not.toHaveBeenCalled()
   })
 })
 

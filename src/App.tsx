@@ -1096,6 +1096,7 @@ export default function App() {
           onMoveView={handleMoveView}
           onNewCanvas={handleNewCanvas}
           onOpenSettings={() => setSettingsOpen(true)}
+          onRestartToUpdate={handleRestartToUpdate}
           updateReady={updateState.phase === 'ready'}
         />
         <div

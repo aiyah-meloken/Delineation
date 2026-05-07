@@ -37,6 +37,7 @@ interface Props {
   onMoveView: (filename: string, targetFolder: string) => void
   onNewCanvas: (folderPath: string | undefined, name: string) => void
   onOpenSettings: () => void
+  onRestartToUpdate: () => void
   updateReady: boolean
 }
 
@@ -271,6 +272,7 @@ export function Sidebar({
   onMoveView,
   onNewCanvas,
   onOpenSettings,
+  onRestartToUpdate,
   updateReady,
 }: Props) {
   const tree = buildViewTree(views, folders)
@@ -448,9 +450,9 @@ export function Sidebar({
         <div className="activity-group">
           <button
             className={`activity-button ${updateReady ? 'has-update' : ''}`}
-            onClick={onOpenSettings}
+            onClick={updateReady ? onRestartToUpdate : onOpenSettings}
             title={updateReady ? 'Restart to Update' : 'Settings'}
-            aria-label="Settings"
+            aria-label={updateReady ? 'Restart and install update' : 'Settings'}
           >
             <Settings size={18} />
           </button>
@@ -548,7 +550,7 @@ export function Sidebar({
         <div className="vault-status">
           <span>{projectName ?? 'No Project'}</span>
           {updateReady && (
-            <button className="vault-update-button" onClick={onOpenSettings}>
+            <button className="vault-update-button" onClick={onRestartToUpdate}>
               Restart to Update
             </button>
           )}
