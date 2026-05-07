@@ -1,4 +1,7 @@
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::process::Stdio;
+use std::sync::OnceLock;
 
 use portable_pty::CommandBuilder;
 use regex::Regex;
@@ -30,15 +33,29 @@ pub(crate) fn strip_ansi(s: &str) -> String {
     osc.replace_all(&s, "").to_string()
 }
 
-fn find_executable(name: &str) -> Option<PathBuf> {
-    let paths = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&paths) {
+fn find_executable_in_path(name: &str, path: &std::ffi::OsStr) -> Option<PathBuf> {
+    for dir in std::env::split_paths(path) {
         let candidate = dir.join(name);
         if candidate.is_file() {
             return Some(candidate);
         }
     }
     None
+}
+
+fn find_executable_from_process_env(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    find_executable_in_path(name, &path)
+}
+
+fn find_executable(name: &str) -> Option<PathBuf> {
+    if let Some(path) = shell_profile_env().get("PATH") {
+        if let Some(found) = find_executable_in_path(name, std::ffi::OsStr::new(path)) {
+            return Some(found);
+        }
+    }
+
+    find_executable_from_process_env(name)
 }
 
 fn default_shell() -> String {
@@ -49,7 +66,7 @@ fn default_shell() -> String {
     }
 
     for shell in ["zsh", "bash", "fish", "sh"] {
-        if let Some(path) = find_executable(shell) {
+        if let Some(path) = find_executable_from_process_env(shell) {
             return path.to_string_lossy().to_string();
         }
     }
@@ -90,9 +107,59 @@ pub fn available_profiles() -> Vec<TerminalProfile> {
     profiles
 }
 
+fn shell_profile_env() -> &'static HashMap<String, String> {
+    static PROFILE_ENV: OnceLock<HashMap<String, String>> = OnceLock::new();
+    PROFILE_ENV.get_or_init(capture_shell_profile_env)
+}
+
+fn capture_shell_profile_env() -> HashMap<String, String> {
+    let shell = default_shell();
+    for args in [["-lic", "env"], ["-lc", "env"]] {
+        let output = std::process::Command::new(&shell)
+            .args(args)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output();
+        if let Ok(output) = output {
+            if output.status.success() {
+                let env = parse_env_output(&String::from_utf8_lossy(&output.stdout));
+                if !env.is_empty() {
+                    return env;
+                }
+            }
+        }
+    }
+
+    HashMap::new()
+}
+
+fn parse_env_output(output: &str) -> HashMap<String, String> {
+    let mut env = HashMap::new();
+    for line in output.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+        if key.is_empty()
+            || !key
+                .chars()
+                .all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+            || key.chars().next().is_some_and(|ch| ch.is_ascii_digit())
+        {
+            continue;
+        }
+        env.insert(key.to_string(), value.to_string());
+    }
+    env
+}
+
 pub(crate) fn apply_common_env(cmd: &mut CommandBuilder) {
+    for (key, value) in shell_profile_env() {
+        cmd.env(key, value);
+    }
     if let Ok(path) = std::env::var("PATH") {
-        cmd.env("PATH", path);
+        if !shell_profile_env().contains_key("PATH") {
+            cmd.env("PATH", path);
+        }
     }
     cmd.env("TERM", "xterm-256color");
     cmd.env("COLORTERM", "truecolor");
@@ -103,6 +170,20 @@ pub(crate) fn apply_common_env(cmd: &mut CommandBuilder) {
     cmd.env("LANG", std::env::var("LANG").unwrap_or_else(|_| "en_US.UTF-8".into()));
     if let Ok(home) = std::env::var("HOME") {
         cmd.env("HOME", home);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_env_output_keeps_valid_shell_variables() {
+        let env = parse_env_output("PATH=/opt/bin:/usr/bin\nbad line\n1BAD=no\nA_B=value=with=equals\n");
+
+        assert_eq!(env.get("PATH"), Some(&"/opt/bin:/usr/bin".to_string()));
+        assert_eq!(env.get("A_B"), Some(&"value=with=equals".to_string()));
+        assert!(!env.contains_key("1BAD"));
     }
 }
 
